@@ -239,4 +239,16 @@ final class ReceiverViewController: SettingsPageController {
             },
         ]
     }
+
+    /// 把日志写到临时文件，用系统分享面板导出。
+    private func exportLog() {
+        let text = DiagnosticsLog.shared.text
+        guard !text.isEmpty else { return }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("carwithin-log.txt")
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        controller.popoverPresentationController?.sourceView = view
+        present(controller, animated: true)
+    }
 }
