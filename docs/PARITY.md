@@ -13,7 +13,7 @@
 | 九号 5 寸输出 | 5 | ✅ 可用（待真机） | 裸 RTP + UDP 5012，VideoToolbox 编码 |
 | 九号 7 寸输出 | — | ✅ 可用（待真机） | RTP 封装进 KCP(conv=3)，1024×600 / 25 FPS |
 | CarPlay 会话 | 36 | ⛔ 未实现 | 依赖 `ACCTransportClient` 私有配件传输 |
-| 浏览器输出 / HTTPS | 7 | ⛔ 未实现 | 需 WebSocket + MSE/WebCodecs 服务端 |
+| 浏览器输出 / HTTPS | 7 | ◐ 部分实现 | HTTP + MJPEG 已可用；WebSocket/WebCodecs 与自签 HTTPS 未做 |
 | 无线 CarLife | 7 | ⛔ 未实现 | 协议移植量大，且需车机实测 |
 | 台铃 4.3 寸 | 16 | ⛔ 未实现 | JPEG/TCP + RSA 身份协商 |
 | 版本与更新 | 14 | ❌ 按需求删除 | 「关于」整组移除，含检查更新与版本记录 |

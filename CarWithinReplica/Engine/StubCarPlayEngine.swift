@@ -14,15 +14,37 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
 
     @Published private(set) var state: EngineState = .idle
     private var output: NinebotOutput?
+    private var browser: BrowserOutput?
 
     func start(configuration: ReceiverConfiguration) async throws {
         let mode = SettingsStore.output
+        state = .connecting
+
+        if mode == "browser" {
+            let port = UInt16(SettingsStore.receiverPort) ?? 9888
+            let browser = BrowserOutput(port: port)
+            browser.onState = { message in
+                DiagnosticsLog.shared.append(message)
+                DispatchQueue.main.async {
+                    self.state = message.contains("已停止") ? .idle : .running
+                }
+            }
+            do {
+                try browser.start()
+                self.browser = browser
+                state = .running
+            } catch {
+                state = .failed
+                DiagnosticsLog.shared.append("浏览器输出失败：\(error.localizedDescription)")
+                throw error
+            }
+            return
+        }
+
         guard mode == "ninebot5" || mode == "ninebot7" else {
             state = .failed
             throw EngineError.notImplemented
         }
-
-        state = .connecting
         let isSeven = mode == "ninebot7"
         let output = NinebotOutput(config: .init(
             host: SettingsStore.receiverHost,
@@ -57,6 +79,8 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
     func stop() {
         output?.stop()
         output = nil
+        browser?.stop()
+        browser = nil
         state = .idle
     }
 }
