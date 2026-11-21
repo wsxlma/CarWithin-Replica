@@ -48,6 +48,21 @@ _TtC9TDSCarKit12SettingsIcon
 与 `SettingsPageController(title:build:)` 的构造方式一致。详见
 [docs/REVERSED_API.md](docs/REVERSED_API.md)。
 
+## 构建现状（已验证）
+
+仓库已推到 <https://github.com/wsxlma/CarWithin-Replica>，CI 跑通：
+
+| 项 | 结果 |
+| --- | --- |
+| Runner | `macos-15`（`macos-14` 已退役，任务会被直接取消，无日志） |
+| 编译 | 成功，产物 `CarWithin.app`，arm64，最低 iOS 16.0 |
+| 包名 | `local.carwithin.replica`，显示名 `CarWithin` |
+| Release | `v0.1.0` 已附未签名 IPA 与 `SHA256SUMS` |
+
+文案核对说明：`请我喝杯咖啡`（18 字节）在产物二进制里确认不存在；
+但 `诊断与实验`、`使用说明` 这类 **≤15 字节**的中文串会被 Swift 小字符串优化
+内联进指令，静态扫描查不到，只能以源码为准。
+
 ## 用 GitHub Actions 出包
 
 推上 GitHub 后：
@@ -57,7 +72,7 @@ _TtC9TDSCarKit12SettingsIcon
 2. **打 tag**：`git tag v0.1.0 && git push origin v0.1.0`
    → 自动创建 Release 并附上 IPA
 
-工作流用的是 `macos-14` + `xcodegen` + `xcodebuild`，关键开关：
+工作流用的是 `macos-15` + `xcodegen` + `xcodebuild`，关键开关：
 
 ```
 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
