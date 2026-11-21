@@ -154,8 +154,8 @@ final class CarPlaySession {
             return
         }
         onLog?("CoreAccessories：\(ACCBridge.isAvailable ? "可用" : "不可用（仍尝试自建通道）")")
-        if !ACCBridge.isAvailable {
-            onLog?(ACCBridge.selectorDump())
+        if SettingsStore.logLevel == "详细" {
+            onLog?("ACCTransportClient 方法列表：\n" + ACCBridge.selectorDump())
         }
 
         do {
@@ -209,6 +209,9 @@ final class CarPlaySession {
         let id = ObjectIdentifier(connection)
         controlConnections[id] = connection
         parsers[id] = IAP2Parser()
+        connection.stateUpdateHandler = { [weak self] state in
+            self?.onLog?("连接状态：\(String(describing: state))")
+        }
         connection.start(queue: queue)
         onLog?("对端接入：\(String(describing: connection.endpoint))")
         send(.presence, on: connection)
@@ -238,7 +241,15 @@ final class CarPlaySession {
     // MARK: - 协议
 
     private func send(_ packet: IAP2Packet, on connection: NWConnection) {
-        connection.send(content: packet.encoded(), completion: .contentProcessed { _ in })
+        let data = packet.encoded()
+        if SettingsStore.logLevel == "详细" {
+            onLog?("→ control=0x\(String(packet.control, radix: 16)) session=\(packet.session) seq=\(packet.sequence) ack=\(packet.acknowledgement) \(data.count)B \(Self.hex(data))")
+        }
+        connection.send(content: data, completion: .contentProcessed { _ in })
+    }
+
+    private static func hex(_ data: Data, limit: Int = 64) -> String {
+        data.prefix(limit).map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 
     private func nextSequence() -> UInt8 {
@@ -247,6 +258,9 @@ final class CarPlaySession {
     }
 
     private func handle(_ packet: IAP2Packet, on connection: NWConnection) {
+        if SettingsStore.logLevel == "详细" {
+            onLog?("← control=0x\(String(packet.control, radix: 16)) session=\(packet.session) seq=\(packet.sequence) ack=\(packet.acknowledgement) \(packet.payload.count)B \(Self.hex(packet.payload))")
+        }
         if packet.control == 0xFF {
             state = .handshaking
             onLog?("收到 presence，回送配件信息")

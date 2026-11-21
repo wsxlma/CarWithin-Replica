@@ -101,11 +101,6 @@ final class BrowserOutput {
                 cg.drawLinearGradient(gradient, start: .zero,
                                       end: CGPoint(x: 0, y: size.height), options: [])
             }
-            let barWidth = CGFloat(max(24, width / 21))
-            let x = CGFloat((index * 7) % max(1, width - Int(barWidth)))
-            cg.setFillColor(UIColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 1).cgColor)
-            cg.fill(CGRect(x: x, y: 0, width: barWidth, height: size.height))
-
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = .center
             let attributes: [NSAttributedString.Key: Any] = [
@@ -113,7 +108,7 @@ final class BrowserOutput {
                 .foregroundColor: UIColor.white,
                 .paragraphStyle: paragraph,
             ]
-            let text = "CarWithin\n\(index)"
+            let text = "等待 CarPlay 画面\n\nCarPlay 会话尚未建立，\n建立后这里会显示实时画面。"
             text.draw(in: CGRect(x: 0, y: size.height / 2 - 110, width: size.width, height: 220),
                       withAttributes: attributes)
         }
