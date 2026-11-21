@@ -18,6 +18,7 @@ final class BrowserOutput {
     private var timer: DispatchSourceTimer?
     private var frameIndex = 0
     private var latestJPEG: Data?
+    private var startAttempts = 0
 
     var onState: ((String) -> Void)?
 
@@ -29,9 +30,27 @@ final class BrowserOutput {
     }
 
     func start() throws {
+        guard listener == nil else {
+            onLog?("浏览器输出已在运行，跳过重复启动")
+            return
+        }
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
-        let listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port) ?? 9888)
+        let listener: NWListener
+        do {
+            listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port) ?? 9888)
+        } catch {
+            startAttempts += 1
+            if startAttempts <= 3 {
+                onLog?("端口 \(port) 占用，0.8 秒后重试（第 \(startAttempts) 次）")
+                queue.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    try? self?.start()
+                }
+                return
+            }
+            throw error
+        }
+        startAttempts = 0
 
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)

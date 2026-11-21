@@ -18,6 +18,10 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
     private var carplay: CarPlaySession?
 
     func start(configuration: ReceiverConfiguration) async throws {
+        if state == .running {
+            DiagnosticsLog.shared.append("已在推送中，忽略重复启动")
+            return
+        }
         let mode = SettingsStore.output
         state = .connecting
 

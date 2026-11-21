@@ -136,6 +136,7 @@ final class CarPlaySession {
     private var parsers: [ObjectIdentifier: IAP2Parser] = [:]
     private var sequence: UInt8 = 0
     private var touch = TouchHID()
+    private var startAttempts = 0
 
     let controlPort: UInt16
     let dataPort: UInt16
@@ -148,7 +149,10 @@ final class CarPlaySession {
     // MARK: - 生命周期
 
     func start() {
-        guard controlListener == nil else { return }
+        guard controlListener == nil else {
+            onLog?("会话已在监听，跳过重复启动")
+            return
+        }
         onLog?("CoreAccessories：\(ACCBridge.isAvailable ? "可用" : "不可用（仍尝试自建通道）")")
         if !ACCBridge.isAvailable {
             onLog?(ACCBridge.selectorDump())
@@ -158,10 +162,17 @@ final class CarPlaySession {
             controlListener = try makeListener(port: controlPort)
             dataListener = try makeListener(port: dataPort)
         } catch {
-            state = .failed
-            onLog?("监听失败：\(error.localizedDescription)")
+            startAttempts += 1
+            if startAttempts <= 3 {
+                onLog?("端口占用，0.8 秒后重试（第 \(startAttempts) 次）")
+                queue.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.start() }
+            } else {
+                state = .failed
+                onLog?("监听失败：\(error.localizedDescription)")
+            }
             return
         }
+        startAttempts = 0
         state = .listening
         onLog?("等待连接：控制 \(controlPort) / 数据 \(dataPort)")
     }
