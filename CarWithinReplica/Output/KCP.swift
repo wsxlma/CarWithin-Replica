@@ -146,7 +146,7 @@ final class KCP {
     }
 
     func check(_ ms: UInt32) -> UInt32 {
-        var minimal = diff(tsFlush, ms)
+        var minimal = Int(diff(tsFlush, ms))
         if minimal < 0 { minimal = 0 }
         for seg in sndBuf {
             let d = diff(seg.resendts, ms)
