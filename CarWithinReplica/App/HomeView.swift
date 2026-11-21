@@ -9,6 +9,11 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showEngineAlert = false
 
+    // 与原版一致：首页卡片跟随「当前输出」变化，而不是固定一张九号卡片。
+    @AppStorage("output.mode") private var outputMode: String = "browser"
+    @AppStorage("output.host") private var receiverHost: String = "192.168.1.1"
+    @AppStorage("output.port") private var receiverPort: String = "9888"
+
     private let cardBackground = Color(red: 0.11, green: 0.11, blue: 0.12)
 
     var body: some View {
@@ -16,7 +21,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     carPlayCard
-                    ninebotCard
+                    outputCard
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -114,21 +119,62 @@ struct HomeView: View {
         .background(cardBackground, in: RoundedRectangle(cornerRadius: 18))
     }
 
-    private var ninebotCard: some View {
+    // 当前输出对应的卡片。原版不是固定展示「九号 5 寸」，而是跟着设置变化。
+    private var outputTitle: String {
+        switch outputMode {
+        case "ninebot5": return "九号 5 寸连接"
+        case "ninebot7": return "九号 7 寸连接"
+        case "tailing": return "台铃 4.3 寸连接"
+        case "carlife": return "无线 CarLife"
+        case "airplay": return "AirPlay 接收"
+        default: return "浏览器输出"
+        }
+    }
+
+    private var outputSymbol: String {
+        switch outputMode {
+        case "browser": return "safari"
+        case "carlife": return "car.side"
+        case "airplay": return "airplayvideo"
+        default: return "point.3.connected.trianglepath.dotted"
+        }
+    }
+
+    private var outputHint: String {
+        switch outputMode {
+        case "browser": return "让接收设备连到同一 Wi-Fi，打开 App 显示的地址。"
+        case "carlife": return "让车机与 iPhone 连到同一 Wi-Fi，再打开车机上的 CarLife。"
+        case "airplay": return "启动后从主界面连接卡片选择同一网络中的接收器。"
+        default: return "让 iPhone 加入仪表 Wi-Fi，打开仪表投屏后启动 CarPlay。"
+        }
+    }
+
+    private var outputDetail: String {
+        switch outputMode {
+        case "ninebot5": return "等待启动 CarPlay · 仪表 IP: \(receiverHost) · 848×480"
+        case "ninebot7": return "等待启动 CarPlay · 仪表 IP: \(receiverHost) · 1024×600"
+        case "tailing": return "等待启动 CarPlay · 仪表 IP: \(receiverHost) · 480×272"
+        case "carlife": return "等待启动 CarPlay · 车机地址: \(receiverHost)"
+        case "airplay": return "等待启动 CarPlay · 请在接收设备选择 AirPlay"
+        default: return "接收地址 · \(receiverHost):\(receiverPort)"
+        }
+    }
+
+    private var outputCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: outputSymbol)
                     .font(.system(size: 20))
                     .foregroundStyle(.cyan)
-                Text("九号 5 寸连接")
+                Text(outputTitle)
                     .font(.system(size: 18, weight: .semibold))
             }
 
-            Text("让 iPhone 加入仪表 Wi-Fi，打开仪表投屏后启动 CarPlay。")
+            Text(outputHint)
                 .font(.system(size: 16))
                 .foregroundStyle(.secondary)
 
-            Text("等待启动 CarPlay · 仪表 IP: 192.168.1.1")
+            Text(outputDetail)
                 .font(.system(size: 15))
                 .foregroundStyle(.secondary)
 
