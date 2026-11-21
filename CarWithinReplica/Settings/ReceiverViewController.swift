@@ -202,16 +202,38 @@ final class ReceiverViewController: SettingsPageController {
                     onSelect: { SettingsStore.drivingSide = $0 })
             },
 
-            pushRow("车辆", symbol: "car.fill", tint: .systemTeal) {
-                GuideViewController(title: "车辆", text: """
-                车辆按钮与原版一致：
-
-                · 可启用或隐藏车辆按钮
-                · 可选取自定义图标
-                · 可恢复默认图标
-
-                图标更改会在下次启动 CarPlay 时生效。
-                """)
+            pushRow("车辆", symbol: "car.fill", tint: .systemTeal) { [weak self] in
+                guard let self else { return GuideViewController(title: "车辆", text: "") }
+                return self.page("车辆") { page in
+                    [
+                        SettingsSection(nil, footer: "车辆名称显示在 iPhone 的 CarPlay 车辆列表中。", rows: [
+                            page.pushRow("车辆名称", symbol: "car", tint: .systemGray,
+                                         detail: { SettingsStore.vehicleName },
+                                         accessory: .none) {
+                                FormViewController(title: "车辆名称", fields: [
+                                    .init(title: "名称", placeholder: "CarWithin",
+                                          value: { SettingsStore.vehicleName },
+                                          onCommit: { SettingsStore.vehicleName = $0 }),
+                                ])
+                            },
+                        ]),
+                        SettingsSection("CarPlay 车辆按钮",
+                                        footer: "图片会居中裁成正方形，下次启动 CarPlay 时生效。",
+                                        rows: [
+                            SettingsRow("显示车辆按钮", symbol: "car.side", tint: .systemTeal,
+                                        accessory: .toggle(SettingsStore.showVehicleButton) {
+                                            SettingsStore.showVehicleButton = $0
+                                        }),
+                            page.pushRow("当前图标 · \(SettingsStore.vehicleIcon)",
+                                         symbol: "car.fill", tint: .systemBlue) {
+                                GuideViewController(title: "车辆图标", text: "当前使用默认图标。可从照片选择自定义图标。")
+                            },
+                            page.pushRow("从照片选择图标", symbol: "photo", tint: .systemBlue) {
+                                GuideViewController(title: "从照片选择图标", text: "选取一张图片，居中裁成正方形作为车辆按钮图标。")
+                            },
+                        ]),
+                    ]
+                }
             },
         ]
     }

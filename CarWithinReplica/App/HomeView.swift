@@ -18,6 +18,7 @@ struct HomeView: View {
     @AppStorage("output.port") private var receiverPort: String = "9888"
     @AppStorage("wifi.ssid") private var wifiSSID: String = ""
     @AppStorage("wifi.open") private var wifiOpen: Bool = false
+    @AppStorage("wifi.password") private var wifiPassword: String = ""
     @AppStorage("https.port") private var httpsPort: String = "9889"
 
     private let cardBackground = Color(red: 0.11, green: 0.11, blue: 0.12)
@@ -88,10 +89,13 @@ struct HomeView: View {
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                Circle().fill(.green).frame(width: 8, height: 8)
-                Text("准备就绪")
+                Circle()
+                    .fill(engine.state == .running ? Color.green : Color.blue)
+                    .frame(width: 8, height: 8)
+                Text(statusText)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(engine.state == .running ? Color.green : Color(red: 0.35, green: 0.66, blue: 1.0))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 10)
@@ -102,7 +106,7 @@ struct HomeView: View {
                 .font(.system(size: 16))
                 .foregroundStyle(.secondary)
 
-            Text("请在设置中添加或选择 Wi-Fi 预设。")
+            Text("CarPlay Wi-Fi 预设：\(wifiSSID.isEmpty ? "未选择" : wifiSSID)")
                 .font(.system(size: 16, weight: .semibold))
 
             Button {

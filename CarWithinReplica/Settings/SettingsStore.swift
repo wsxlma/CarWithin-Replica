@@ -84,6 +84,16 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "carplay.side") }
     }
 
+    static var vehicleName: String {
+        get { string("carplay.vehicleName", "CarWithin") }
+        set { defaults.set(newValue, forKey: "carplay.vehicleName") }
+    }
+
+    static var showVehicleButton: Bool {
+        get { flag("carplay.showVehicleButton", true) }
+        set { defaults.set(newValue, forKey: "carplay.showVehicleButton") }
+    }
+
     static var vehicleIcon: String {
         get { string("carplay.vehicleIcon", "默认") }
         set { defaults.set(newValue, forKey: "carplay.vehicleIcon") }
