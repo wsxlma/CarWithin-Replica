@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  ubuntu:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "ubuntu runner ok"
-
-  macos:
-    runs-on: macos-14
+  macos-latest:
+    runs-on: macos-latest
     steps:
       - run: sw_vers && xcodebuild -version
+
+  macos-15:
+    runs-on: macos-15
+    steps:
+      - run: sw_vers
