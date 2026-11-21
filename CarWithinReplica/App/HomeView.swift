@@ -8,6 +8,9 @@ struct HomeView: View {
     @StateObject private var engine = StubCarPlayEngine()
     @State private var showSettings = false
     @State private var showEngineAlert = false
+    @State private var localIP: String = BrowserOutput.localIPv4() ?? "—"
+    @State private var copied = false
+    @State private var showHTTPS = false
 
     // 与原版一致：首页卡片跟随「当前输出」变化，而不是固定一张九号卡片。
     @AppStorage("output.mode") private var outputMode: String = "browser"
@@ -15,6 +18,7 @@ struct HomeView: View {
     @AppStorage("output.port") private var receiverPort: String = "9888"
     @AppStorage("wifi.ssid") private var wifiSSID: String = ""
     @AppStorage("wifi.open") private var wifiOpen: Bool = false
+    @AppStorage("https.port") private var httpsPort: String = "9889"
 
     private let cardBackground = Color(red: 0.11, green: 0.11, blue: 0.12)
 
@@ -56,6 +60,10 @@ struct HomeView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear { localIP = BrowserOutput.localIPv4() ?? "—" }
+        .onChange(of: showSettings) { showing in
+            if !showing { localIP = BrowserOutput.localIPv4() ?? "—" }
+        }
     }
 
     // MARK: - 卡片
@@ -208,11 +216,91 @@ struct HomeView: View {
         case "tailing": return "等待启动 CarPlay · 仪表 IP: \(receiverHost) · 480×272"
         case "carlife": return "等待启动 CarPlay · 车机地址: \(receiverHost)"
         case "airplay": return "等待启动 CarPlay · 请在接收设备选择 AirPlay"
-        default: return "接收地址 · \(receiverHost):\(receiverPort)"
+        default: return "http://\(localIP):\(receiverPort)"
         }
     }
 
+    @ViewBuilder
     private var outputCard: some View {
+        if outputMode == "browser" {
+            browserCard
+        } else {
+            deviceCard
+        }
+    }
+
+    /// 浏览器输出：显示本机实时 IP，可复制，HTTPS 可折叠。
+    private var browserCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "network")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.green)
+                Text("局域网浏览器访问")
+                    .font(.system(size: 18, weight: .semibold))
+            }
+
+            Text("兼容模式（HTTP）")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Text("http://\(localIP):\(receiverPort)")
+                    .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = "http://\(localIP):\(receiverPort)"
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        Text(copied ? "已复制" : "复制").font(.system(size: 15, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(red: 0.10, green: 0.22, blue: 0.36), in: Capsule())
+                    .foregroundStyle(Color(red: 0.35, green: 0.66, blue: 1.0))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { showHTTPS.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("HTTPS（低延迟）")
+                        .font(.system(size: 16, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .rotationEffect(.degrees(showHTTPS ? 180 : 0))
+                }
+                .foregroundStyle(Color(red: 0.35, green: 0.66, blue: 1.0))
+            }
+            .buttonStyle(.plain)
+
+            if showHTTPS {
+                Text("需在接收设备安装并信任证书后访问 https://\(localIP):\(httpsPort)")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("启动后最多 4 台同时观看。")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .background {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1))
+        }
+    }
+
+    private var deviceCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: outputSymbol)
