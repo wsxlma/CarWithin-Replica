@@ -43,8 +43,14 @@ final class WiFiPresetsViewController: UITableViewController {
         reload()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        reload()
+    }
+
     private func reload() {
         presets = SettingsStore.presets
+        guard isViewLoaded else { return }
         tableView.reloadData()
     }
 

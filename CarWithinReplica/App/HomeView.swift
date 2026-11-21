@@ -23,6 +23,13 @@ struct HomeView: View {
 
     private let cardBackground = Color(red: 0.11, green: 0.11, blue: 0.12)
 
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = info?["CFBundleVersion"] as? String ?? "1"
+        return "\(version) (\(build))"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -78,7 +85,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("本机 CarPlay")
                         .font(.system(size: 28, weight: .bold))
-                    Text("(1.0.2)")
+                    Text("(\(appVersion))")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
                 }

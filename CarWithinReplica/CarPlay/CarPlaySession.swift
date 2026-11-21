@@ -66,6 +66,84 @@ enum ACCBridge {
         return result
     }
 
+    /// 按真实签名建立连接与 endpoint。block 先传 nil，避免未知 block 签名导致崩溃。
+    static func connect() -> [String] {
+        var steps: [String] = []
+        guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
+            return ["CoreAccessories 加载失败"]
+        }
+        defer { dlclose(handle) }
+        guard let cls = NSClassFromString("ACCTransportClient") else {
+            return ["未找到 ACCTransportClient"]
+        }
+        guard let meta = object_getClass(cls) else { return ["无法取到元类"] }
+
+        let sharedSelector = NSSelectorFromString("sharedClient")
+        guard let sharedIMP = class_getMethodImplementation(meta, sharedSelector) else {
+            return ["没有 +sharedClient"]
+        }
+        typealias SharedFn = @convention(c) (AnyObject, Selector) -> AnyObject?
+        let sharedFn = unsafeBitCast(sharedIMP, to: SharedFn.self)
+        guard let client = sharedFn(cls as AnyObject, sharedSelector) else {
+            return ["+sharedClient 返回 nil"]
+        }
+        steps.append("sharedClient → \(type(of: client))")
+
+        // launchServer（无参数、无返回）
+        let launchSelector = NSSelectorFromString("launchServer")
+        if let imp = class_getMethodImplementation(cls, launchSelector) {
+            typealias VoidFn = @convention(c) (AnyObject, Selector) -> Void
+            unsafeBitCast(imp, to: VoidFn.self)(client, launchSelector)
+            steps.append("launchServer 已调用")
+        }
+
+        // createConnectionWithType:andIdentifier: (i, @)
+        let connectionSelector = NSSelectorFromString("createConnectionWithType:andIdentifier:")
+        guard let connectionIMP = class_getMethodImplementation(cls, connectionSelector) else {
+            return steps + ["没有 createConnection"]
+        }
+        typealias ConnectionFn = @convention(c) (AnyObject, Selector, Int32, NSString) -> AnyObject?
+        let connectionFn = unsafeBitCast(connectionIMP, to: ConnectionFn.self)
+
+        var connectionUUID: NSUUID?
+        for type in Int32(1)...Int32(3) {
+            if let created = connectionFn(client, connectionSelector, type, "CarWithin" as NSString) {
+                steps.append("createConnection(type=\(type)) → \(created)")
+                if let uuid = created as? NSUUID {
+                    connectionUUID = uuid
+                } else if let text = created as? String, let uuid = UUID(uuidString: text) {
+                    connectionUUID = uuid as NSUUID
+                }
+                if connectionUUID != nil { break }
+            } else {
+                steps.append("createConnection(type=\(type)) → nil")
+            }
+        }
+
+        guard let uuid = connectionUUID else {
+            return steps + ["未拿到 connection UUID，停止"]
+        }
+
+        // createEndpointWithTransportType:... (i, i, @, @?, @, B)
+        let endpointSelector = NSSelectorFromString(endpointSelector)
+        guard let endpointIMP = class_getMethodImplementation(cls, endpointSelector) else {
+            return steps + ["没有 createEndpoint"]
+        }
+        typealias EndpointFn = @convention(c) (AnyObject, Selector,
+                                               Int32, Int32, NSString,
+                                               AnyObject?, NSUUID, Bool) -> AnyObject?
+        let endpointFn = unsafeBitCast(endpointIMP, to: EndpointFn.self)
+
+        for transportType in Int32(1)...Int32(2) {
+            let result = endpointFn(client, endpointSelector,
+                                    transportType, 4, "CarWithin" as NSString,
+                                    nil, uuid, true)
+            steps.append("createEndpoint(transport=\(transportType), protocol=4) → \(result.map { String(describing: $0) } ?? "nil")")
+            if result != nil { break }
+        }
+        return steps
+    }
+
     private static func signature(of method: Method) -> String {
         guard let encoding = method_getTypeEncoding(method) else { return "（无类型编码）" }
         let raw = String(cString: encoding)
@@ -267,6 +345,9 @@ final class CarPlaySession {
         startAttempts = 0
         state = .listening
         onLog?("等待连接：控制 \(controlPort) / 数据 \(dataPort)")
+
+        let steps = ACCBridge.connect()
+        steps.forEach { onLog?("[ACC] " + $0) }
     }
 
     func stop() {

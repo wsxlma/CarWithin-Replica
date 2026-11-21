@@ -180,8 +180,6 @@ enum OutputMode {
         ("browser", "浏览器"),
         ("ninebot5", "九号 5 寸"),
         ("ninebot7", "九号 7 寸（实验）"),
-        ("tailing", "台铃 4.3 寸（实验）"),
-        ("carlife", "无线 CarLife"),
         ("airplay", "AirPlay（实验）"),
     ]
 
