@@ -108,7 +108,16 @@ final class WiFiPresetsViewController: UITableViewController {
                 FormViewController(title: "编辑当前预设", fields: [
                     .init(title: "名称", placeholder: "SSID",
                           value: { SettingsStore.wifiSSID },
-                          onCommit: { SettingsStore.wifiSSID = $0 }),
+                          onCommit: { name in
+                              let trimmed = name.trimmingCharacters(in: .whitespaces)
+                              SettingsStore.wifiSSID = trimmed
+                              var presets = SettingsStore.presets
+                              presets.removeAll { $0 != trimmed && trimmed.hasPrefix($0) }
+                              if !trimmed.isEmpty, !presets.contains(trimmed) {
+                                  presets.append(trimmed)
+                              }
+                              SettingsStore.presets = presets
+                          }),
                     .init(title: "密码", placeholder: "开放网络留空",
                           value: { SettingsStore.wifiPassword },
                           onCommit: { SettingsStore.wifiPassword = $0 },

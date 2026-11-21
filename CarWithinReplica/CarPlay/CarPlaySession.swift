@@ -134,28 +134,26 @@ enum ACCBridge {
                                                AnyObject?, NSUUID, Bool) -> AnyObject?
         let endpointFn = unsafeBitCast(endpointIMP, to: EndpointFn.self)
 
-        // 参数网格扫描：transport 与 protocol 的真实取值未知，逐个试并记录成功的组合。
-        var successes: [String] = []
-        for publish in [false, true] {
-            for transportType in Int32(0)...Int32(8) {
-                for protocolType in Int32(0)...Int32(8) {
-                    let result = endpointFn(client, endpointSelector,
-                                            transportType, protocolType,
-                                            "CarWithin" as NSString,
-                                            nil, uuid, publish)
-                    if let endpoint = result {
-                        let text = "createEndpoint(transport=\(transportType), protocol=\(protocolType), publish=\(publish)) → \(endpoint)"
-                        successes.append(text)
-                        steps.append(text)
-                    }
-                }
-            }
+        // 先 publish，很多实现要求连接先发布才允许挂 endpoint。
+        let publishSelector = NSSelectorFromString("publishConnectionWithUUID:")
+        if let imp = class_getMethodImplementation(cls, publishSelector) {
+            typealias PublishFn = @convention(c) (AnyObject, Selector, NSUUID) -> Bool
+            let published = unsafeBitCast(imp, to: PublishFn.self)(client, publishSelector, uuid)
+            steps.append("publishConnection → \(published)")
         }
-        if successes.isEmpty {
-            steps.append("全部组合返回 nil（transport 0-8 / protocol 0-8 / publish false,true）")
-        } else {
-            steps.append("命中 \(successes.count) 组")
+
+        // 看看系统是否已经给了 endpoint
+        let listSelector = NSSelectorFromString("endpointUUIDsForConnectionWithUUID:")
+        if let imp = class_getMethodImplementation(cls, listSelector) {
+            typealias ListFn = @convention(c) (AnyObject, Selector, NSUUID) -> AnyObject?
+            let endpoints = unsafeBitCast(imp, to: ListFn.self)(client, listSelector, uuid)
+            steps.append("endpoints → \(endpoints.map { String(describing: $0) } ?? "nil")")
         }
+
+        // 只试一次：transport=1, protocol=4, publish=false（block 仍为 nil）
+        let attempt = endpointFn(client, endpointSelector, 1, 4,
+                                 "CarWithin" as NSString, nil, uuid, false)
+        steps.append("createEndpoint(transport=1, protocol=4, publish=false) → \(attempt.map { String(describing: $0) } ?? "nil")")
 
         return steps
     }
