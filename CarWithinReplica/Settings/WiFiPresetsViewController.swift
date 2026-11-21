@@ -66,13 +66,27 @@ final class WiFiPresetsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
+    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
+
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        presets.count
+        section == 0 ? presets.count : 1
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        section == 0 ? "轻点选用，左滑后确认删除。" : nil
     }
 
     override func tableView(_ tableView: UITableView,
                             cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
+        if indexPath.section == 1 {
+            var content = cell.defaultContentConfiguration()
+            content.text = "编辑当前预设"
+            content.image = UIImage(systemName: "square.and.pencil")
+            cell.contentConfiguration = content
+            cell.accessoryType = .disclosureIndicator
+            return cell
+        }
         let name = presets[indexPath.row]
         var content = cell.defaultContentConfiguration()
         content.text = name
@@ -83,6 +97,19 @@ final class WiFiPresetsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        if indexPath.section == 1 {
+            navigationController?.pushViewController(
+                FormViewController(title: "编辑当前预设", fields: [
+                    .init(title: "名称", placeholder: "SSID",
+                          value: { SettingsStore.wifiSSID },
+                          onCommit: { SettingsStore.wifiSSID = $0 }),
+                    .init(title: "密码", placeholder: "开放网络留空",
+                          value: { SettingsStore.wifiPassword },
+                          onCommit: { SettingsStore.wifiPassword = $0 },
+                          secure: true),
+                ], footer: "保存后返回即可生效。"), animated: true)
+            return
+        }
         SettingsStore.wifiSSID = presets[indexPath.row]
         reload()
     }

@@ -34,7 +34,18 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
 
         if mode == "browser" {
             let port = UInt16(SettingsStore.receiverPort) ?? 9888
-            let browser = BrowserOutput(port: port)
+            let size: (Int, Int)
+            if SettingsStore.resolution.contains("720") {
+                size = (1280, 720)
+            } else if SettingsStore.resolution.contains("480") {
+                size = (854, 480)
+            } else {
+                size = (1920, 1080)
+            }
+            let browser = BrowserOutput(port: port,
+                                        width: size.0,
+                                        height: size.1,
+                                        fps: max(10, SettingsStore.fps))
             browser.onState = { message in
                 DiagnosticsLog.shared.append(message)
                 DispatchQueue.main.async {

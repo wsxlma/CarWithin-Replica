@@ -14,6 +14,7 @@ final class BrowserOutput {
 
     private let queue = DispatchQueue(label: "carwithin.browser")
     private var listener: NWListener?
+    private var streams: [ObjectIdentifier: NWConnection] = [:]
     private var timer: DispatchSourceTimer?
     private var frameIndex = 0
     private var latestJPEG: Data?
@@ -79,6 +80,8 @@ final class BrowserOutput {
     func stop() {
         timer?.cancel(); timer = nil
         listener?.cancel(); listener = nil
+        streams.values.forEach { $0.cancel() }
+        streams.removeAll()
         onState?("浏览器输出已停止")
     }
 
@@ -115,6 +118,18 @@ final class BrowserOutput {
                       withAttributes: attributes)
         }
         latestJPEG = image.jpegData(compressionQuality: 0.6)
+        pushFrame()
+    }
+
+    private func pushFrame() {
+        guard let data = latestJPEG, !streams.isEmpty else { return }
+        let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(data.count)\r\n\r\n"
+        var packet = Data(header.utf8)
+        packet.append(data)
+        packet.append(Data("\r\n".utf8))
+        for connection in streams.values {
+            connection.send(content: packet, completion: .contentProcessed { _ in })
+        }
     }
 
     // MARK: - HTTP
@@ -127,8 +142,8 @@ final class BrowserOutput {
                 return
             }
             let request = String(decoding: data, as: UTF8.self)
-            if request.contains("GET /frame.jpg") {
-                self.respondFrame(connection)
+            if request.contains("GET /stream") {
+                self.startStream(connection)
             } else {
                 self.respondIndex(connection)
             }
@@ -141,15 +156,13 @@ final class BrowserOutput {
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>CarWithin</title>
         <style>
-        html,body{margin:0;height:100%;background:#000}
-        body{display:flex;align-items:center;justify-content:center}
-        img{width:100%;height:100%;object-fit:contain;display:block}
+        body{margin:0;background:#0b0f16;color:#e6edf7;font:16px -apple-system,sans-serif;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
+        img{width:100%;max-width:1280px;border-radius:12px;box-shadow:0 8px 30px #0008}
+        p{opacity:.6;margin-top:12px}
         </style>
-        <img id="v" src="/frame.jpg" alt="CarWithin">
-        <script>
-        const img=document.getElementById('v');
-        setInterval(()=>{img.src='/frame.jpg?t='+Date.now();},80);
-        </script>
+        <img src="/stream" alt="CarWithin">
+        <p>CarWithin · MJPEG \(width)×\(height)</p>
         </html>
         """
         let body = Data(html.utf8)
@@ -162,17 +175,18 @@ final class BrowserOutput {
         })
     }
 
-    private func respondFrame(_ connection: NWConnection) {
-        guard let frame = latestJPEG else {
-            let empty = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            connection.send(content: Data(empty.utf8), completion: .contentProcessed { _ in connection.cancel() })
-            return
+    private func startStream(_ connection: NWConnection) {
+        streams[ObjectIdentifier(connection)] = connection
+        let header = "HTTP/1.1 200 OK\r\n"
+            + "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+            + "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(header.utf8),
+                        completion: .contentProcessed { _ in })
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .failed = state {
+                self?.streams.removeValue(forKey: ObjectIdentifier(connection))
+            }
         }
-        let head = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n"
-            + "Content-Length: \(frame.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-        var data = Data(head.utf8)
-        data.append(frame)
-        connection.send(content: data, completion: .contentProcessed { _ in connection.cancel() })
     }
 
     // MARK: - 地址
