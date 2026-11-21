@@ -7,3 +7,6 @@ __pycache__/
 *.pyc
 analysis/manifest.json
 out/
+artifact.zip
+artifact-out/
+*.ipa
