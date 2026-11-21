@@ -8,6 +8,7 @@ import ObjectiveC
 enum ACCBridge {
     static let frameworkPath =
         "/System/Library/PrivateFrameworks/CoreAccessories.framework/CoreAccessories"
+    static var delegateRef: ACCTransportDelegate?
     static let endpointSelector = "createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:"
 
     static var isAvailable: Bool {
@@ -88,6 +89,23 @@ enum ACCBridge {
             return ["+sharedClient 返回 nil"]
         }
         steps.append("sharedClient → \(type(of: client))")
+        steps.append("entitlements：\(entitlementsSummary())")
+
+        let delegate = ACCTransportDelegate()
+        delegate.onEvent = { steps.append("回调：" + $0) }
+        ACCBridge.delegateRef = delegate
+        let setDelegateSelector = NSSelectorFromString("setDelegate:")
+        if let imp = class_getMethodImplementation(cls, setDelegateSelector) {
+            typealias ObjectFn = @convention(c) (AnyObject, Selector, AnyObject?) -> Void
+            unsafeBitCast(imp, to: ObjectFn.self)(client, setDelegateSelector, delegate)
+            steps.append("delegate 已设置")
+        }
+        let setQueueSelector = NSSelectorFromString("setEndpointEventHandlerQueue:")
+        if let imp = class_getMethodImplementation(cls, setQueueSelector) {
+            typealias ObjectFn = @convention(c) (AnyObject, Selector, AnyObject?) -> Void
+            unsafeBitCast(imp, to: ObjectFn.self)(client, setQueueSelector, DispatchQueue.main as AnyObject)
+            steps.append("endpointEventHandlerQueue 已设置")
+        }
 
         // launchServer（无参数、无返回）
         let launchSelector = NSSelectorFromString("launchServer")
@@ -106,18 +124,18 @@ enum ACCBridge {
         let connectionFn = unsafeBitCast(connectionIMP, to: ConnectionFn.self)
 
         var connectionUUID: NSUUID?
-        for type in Int32(1)...Int32(3) {
-            if let created = connectionFn(client, connectionSelector, type, "CarWithin" as NSString) {
-                steps.append("createConnection(type=\(type)) → \(created)")
-                if let uuid = created as? NSUUID {
-                    connectionUUID = uuid
-                } else if let text = created as? String, let uuid = UUID(uuidString: text) {
-                    connectionUUID = uuid as NSUUID
-                }
-                if connectionUUID != nil { break }
-            } else {
+        for type in Int32(0)...Int32(8) {
+            guard let created = connectionFn(client, connectionSelector, type, "CarWithin" as NSString) else {
                 steps.append("createConnection(type=\(type)) → nil")
+                continue
             }
+            steps.append("createConnection(type=\(type)) → \(created)")
+            if let uuid = created as? NSUUID {
+                connectionUUID = uuid
+            } else if let text = created as? String, let uuid = UUID(uuidString: text) {
+                connectionUUID = uuid as NSUUID
+            }
+            if connectionUUID != nil { break }
         }
 
         guard let uuid = connectionUUID else {
@@ -142,6 +160,14 @@ enum ACCBridge {
             steps.append("publishConnection → \(published)")
         }
 
+        // 打印连接属性，确认该连接声明支持的 transport 类型
+        let propsSelector = NSSelectorFromString("propertiesForConnectionWithUUID:")
+        if let imp = class_getMethodImplementation(cls, propsSelector) {
+            typealias PropsFn = @convention(c) (AnyObject, Selector, NSUUID) -> AnyObject?
+            let props = unsafeBitCast(imp, to: PropsFn.self)(client, propsSelector, uuid)
+            steps.append("connection 属性：\(props.map { String(describing: $0) } ?? "nil")")
+        }
+
         // 看看系统是否已经给了 endpoint
         let listSelector = NSSelectorFromString("endpointUUIDsForConnectionWithUUID:")
         if let imp = class_getMethodImplementation(cls, listSelector) {
@@ -156,6 +182,25 @@ enum ACCBridge {
         steps.append("createEndpoint(transport=1, protocol=4, publish=false) → \(attempt.map { String(describing: $0) } ?? "nil")")
 
         return steps
+    }
+
+    /// 从 embedded.mobileprovision 读取 entitlements 键名。
+    static func entitlementsSummary() -> String {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url) else {
+            return "无 embedded.mobileprovision（TrollStore / 越狱安装）"
+        }
+        guard let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8)) else {
+            return "描述文件里找不到 plist"
+        }
+        let plistData = data[start.lowerBound..<end.upperBound]
+        guard let plist = try? PropertyListSerialization.propertyList(
+            from: plistData, options: [], format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any] else {
+            return "未解析出 Entitlements"
+        }
+        return entitlements.keys.sorted().joined(separator: ", ")
     }
 
     private static func signature(of method: Method) -> String {
@@ -525,5 +570,33 @@ final class CarPlaySession {
         send(IAP2Packet(control: 0x02, session: 0,
                         sequence: nextSequence(), acknowledgement: 0,
                         payload: message.encoded()), on: connection)
+    }
+}
+
+
+/// ACCTransportClient 的 delegate 实现。只用于接收回调并写日志。
+final class ACCTransportDelegate: NSObject {
+    var onEvent: ((String) -> Void)?
+
+    @objc func propertiesDidChange(_ properties: NSDictionary?,
+                                   forConnectionWithUUID uuid: NSUUID?,
+                                   previousProperties: NSDictionary?) {
+        onEvent?("connection 属性变化：\(properties?.description ?? "nil")")
+    }
+
+    @objc func propertiesDidChange(_ properties: NSDictionary?,
+                                   forEndpointWithUUID uuid: NSUUID?,
+                                   previousProperties: NSDictionary?,
+                                   connectionUUID: NSUUID?) {
+        onEvent?("endpoint 属性变化：\(properties?.description ?? "nil")")
+    }
+
+    @objc func authStateDidChange(_ state: Int32,
+                                  forConnectionWithUUID uuid: NSUUID?,
+                                  previousAuthState: Int32,
+                                  authType: Int32,
+                                  connectionIsAuthenticated: Bool,
+                                  connectionWasAuthenticated: Bool) {
+        onEvent?("鉴权状态：\(state) 类型 \(authType) 已认证 \(connectionIsAuthenticated)")
     }
 }
