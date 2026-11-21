@@ -47,7 +47,7 @@
 | 私有 RTP 分片 | `NinebotRTP.packets` | 20 字节头、1380 分片，逐字节对照过作者 MIT 实现（Python 侧测试） |
 | KCP | `Output/KCP.swift` | conv/MTU/重传/窗口，参数按 APK 字符串 `conv=3, nodelay/10ms` |
 | 编码 | `H264Encoder` | VideoToolbox Baseline，Annex-B，关键帧补 SPS/PPS |
-| 传输 | `NinebotOutput` | 五寸裸 UDP 5012；七寸 KCP over UDP 5012 |
+| 传输 | `NinebotOutput` | 五寸裸 UDP 5012；七寸 KCP over UDP 5012，**5013 每秒心跳**（APK 反编译确认） |
 
 未验证项：仪表是否接受首段、七寸 KCP MTU 实际值、24 字节控制回复含义。
 

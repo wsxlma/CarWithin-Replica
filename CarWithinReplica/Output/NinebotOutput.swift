@@ -11,12 +11,16 @@ final class NinebotOutput {
         var fps: Int
         var useKCP: Bool
         var videoPort: UInt16 = 5012
+        var controlPort: UInt16 = 5013
         var bitrate: Int = 2_000_000
     }
 
     private let config: Configuration
     private let queue = DispatchQueue(label: "carwithin.ninebot")
     private var socketFD: Int32 = -1
+    private var controlFD: Int32 = -1
+    private var heartbeatCounter: UInt32 = 0
+    private var lastHeartbeat = Date.distantPast
     private var kcp: KCP?
     private var encoder: H264Encoder?
     private var timer: DispatchSourceTimer?
@@ -77,6 +81,25 @@ final class NinebotOutput {
         }
 
         if config.useKCP {
+            // APK 原话：5013 保持心跳。七寸为 KCP + 独立 RTCP 心跳。
+            let control = socket(AF_INET, SOCK_DGRAM, 0)
+            if control >= 0 {
+                var remoteControl = sockaddr_in()
+                remoteControl.sin_family = sa_family_t(AF_INET)
+                remoteControl.sin_port = config.controlPort.bigEndian
+                remoteControl.sin_addr.s_addr = inet_addr(config.host)
+                let ok = withUnsafePointer(to: &remoteControl) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        Darwin.connect(control, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
+                }
+                if ok == 0 {
+                    controlFD = control
+                } else {
+                    close(control)
+                }
+            }
+
             let kcp = KCP(conv: 3) { [weak self] data in self?.sendRaw(data) }
             kcp.setNoDelay()
             kcp.setWindow()
@@ -106,6 +129,10 @@ final class NinebotOutput {
             close(socketFD)
             socketFD = -1
         }
+        if controlFD >= 0 {
+            close(controlFD)
+            controlFD = -1
+        }
         encoder?.invalidate()
         encoder = nil
         kcp = nil
@@ -128,6 +155,16 @@ final class NinebotOutput {
         if let kcp {
             kcp.update(UInt32(truncatingIfNeeded: Int(Date().timeIntervalSince1970 * 1000)))
             onStats?(frameIndex, kcp.retransmits)
+        }
+
+        if controlFD >= 0, Date().timeIntervalSince(lastHeartbeat) >= 1.0 {
+            lastHeartbeat = Date()
+            let beat = NinebotRTP.heartbeat(heartbeatCounter)
+            heartbeatCounter = heartbeatCounter &+ 1
+            beat.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                _ = Darwin.send(controlFD, base, beat.count, 0)
+            }
         }
     }
 
