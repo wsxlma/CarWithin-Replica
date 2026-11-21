@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// 进程内的诊断日志。层级与原版一致：设置 → 支持 → 诊断与实验。
 final class DiagnosticsLog: ObservableObject {
