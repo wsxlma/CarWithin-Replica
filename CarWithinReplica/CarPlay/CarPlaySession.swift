@@ -134,13 +134,29 @@ enum ACCBridge {
                                                AnyObject?, NSUUID, Bool) -> AnyObject?
         let endpointFn = unsafeBitCast(endpointIMP, to: EndpointFn.self)
 
-        for transportType in Int32(1)...Int32(2) {
-            let result = endpointFn(client, endpointSelector,
-                                    transportType, 4, "CarWithin" as NSString,
-                                    nil, uuid, true)
-            steps.append("createEndpoint(transport=\(transportType), protocol=4) → \(result.map { String(describing: $0) } ?? "nil")")
-            if result != nil { break }
+        // 参数网格扫描：transport 与 protocol 的真实取值未知，逐个试并记录成功的组合。
+        var successes: [String] = []
+        for publish in [false, true] {
+            for transportType in Int32(0)...Int32(8) {
+                for protocolType in Int32(0)...Int32(8) {
+                    let result = endpointFn(client, endpointSelector,
+                                            transportType, protocolType,
+                                            "CarWithin" as NSString,
+                                            nil, uuid, publish)
+                    if let endpoint = result {
+                        let text = "createEndpoint(transport=\(transportType), protocol=\(protocolType), publish=\(publish)) → \(endpoint)"
+                        successes.append(text)
+                        steps.append(text)
+                    }
+                }
+            }
         }
+        if successes.isEmpty {
+            steps.append("全部组合返回 nil（transport 0-8 / protocol 0-8 / publish false,true）")
+        } else {
+            steps.append("命中 \(successes.count) 组")
+        }
+
         return steps
     }
 
