@@ -99,6 +99,43 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "carplay.vehicleIcon") }
     }
 
+    // 输出设置
+    static var lanReceiver: Bool {
+        get { flag("output.lan", true) }
+        set { defaults.set(newValue, forKey: "output.lan") }
+    }
+
+    static var browserPerformance: String {
+        get { string("output.performance", "自动") }
+        set { defaults.set(newValue, forKey: "output.performance") }
+    }
+
+    static var showTouches: Bool {
+        get { flag("output.showTouches", false) }
+        set { defaults.set(newValue, forKey: "output.showTouches") }
+    }
+
+    // 画面
+    static var screenMode: String {
+        get { string("video.screenMode", "固定尺寸") }
+        set { defaults.set(newValue, forKey: "video.screenMode") }
+    }
+
+    static var aspectRatio: String {
+        get { string("video.aspect", "预设比例") }
+        set { defaults.set(newValue, forKey: "video.aspect") }
+    }
+
+    static var autoRestart: Bool {
+        get { flag("video.autoRestart", false) }
+        set { defaults.set(newValue, forKey: "video.autoRestart") }
+    }
+
+    static var iconSize: String {
+        get { string("video.iconSize", "默认（200 mm）") }
+        set { defaults.set(newValue, forKey: "video.iconSize") }
+    }
+
     // 日志
     static var logLevel: String {
         get { string("log.level", "详细") }
@@ -114,6 +151,16 @@ enum SettingsStore {
     static var pipTiming: String {
         get { string("pip.timing", "离开 App 时") }
         set { defaults.set(newValue, forKey: "pip.timing") }
+    }
+
+    static var httpAddress: String {
+        let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
+        return "http://\(host):\(receiverPort)"
+    }
+
+    static var httpsAddress: String {
+        let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
+        return "https://\(host):\(httpsPort)"
     }
 }
 
@@ -131,4 +178,5 @@ enum OutputMode {
     static func title(for id: String) -> String {
         all.first { $0.id == id }?.title ?? id
     }
+
 }

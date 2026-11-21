@@ -79,7 +79,7 @@ final class FormViewController: UITableViewController {
         input.returnKeyType = .done
         input.accessibilityLabel = field.title
         input.frame = CGRect(x: 0, y: 0, width: 190, height: 34)
-        input.addTarget(self, action: #selector(editingChanged(_:)), for: .editingChanged)
+        input.addTarget(self, action: #selector(editingEnded(_:)), for: .editingDidEnd)
         input.addTarget(self, action: #selector(editingEnded(_:)), for: .editingDidEndOnExit)
         input.addTarget(self, action: #selector(beganEditing(_:)), for: .editingDidBegin)
         cell.accessoryView = input
@@ -89,10 +89,6 @@ final class FormViewController: UITableViewController {
 
     @objc private func beganEditing(_ sender: UITextField) {
         activeField = sender
-    }
-
-    @objc private func editingChanged(_ sender: UITextField) {
-        commit(sender)
     }
 
     @objc private func editingEnded(_ sender: UITextField) {
