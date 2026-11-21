@@ -15,10 +15,18 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
     @Published private(set) var state: EngineState = .idle
     private var output: NinebotOutput?
     private var browser: BrowserOutput?
+    private var carplay: CarPlaySession?
 
     func start(configuration: ReceiverConfiguration) async throws {
         let mode = SettingsStore.output
         state = .connecting
+
+        // CarPlay 会话始终先起：它负责产出画面，具体往哪送由输出类型决定。
+        let session = CarPlaySession()
+        session.onLog = { message in DiagnosticsLog.shared.append("[CarPlay] " + message) }
+        session.onVideo = { [weak self] frame, key in self?.output?.push(frame: frame, key: key) }
+        session.start()
+        self.carplay = session
 
         if mode == "browser" {
             let port = UInt16(SettingsStore.receiverPort) ?? 9888
@@ -42,8 +50,9 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
         }
 
         guard mode == "ninebot5" || mode == "ninebot7" else {
-            state = .failed
-            throw EngineError.notImplemented
+            // CarPlay 已在监听，画面等对端接入；其他输出类型暂不额外启动 sink。
+            state = .running
+            return
         }
         let isSeven = mode == "ninebot7"
         let output = NinebotOutput(config: .init(
@@ -77,6 +86,8 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
     }
 
     func stop() {
+        carplay?.stop()
+        carplay = nil
         output?.stop()
         output = nil
         browser?.stop()

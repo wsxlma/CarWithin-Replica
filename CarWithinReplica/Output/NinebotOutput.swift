@@ -141,6 +141,11 @@ final class NinebotOutput {
 
     // MARK: - 发送
 
+    /// 供 CarPlay 会话把收到的帧推进来。
+    func push(frame: Data, key: Bool) {
+        sendFrame(frame, key: key)
+    }
+
     private func tick() {
         guard let encoder, socketFD >= 0 else { return }
         let index = frameIndex
