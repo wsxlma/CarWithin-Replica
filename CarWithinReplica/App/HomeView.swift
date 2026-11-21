@@ -114,6 +114,10 @@ struct HomeView: View {
                 .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
+
+            Text("\(engine.state.title) · \(engine.state.detail)")
+                .font(.system(size: 14))
+                .foregroundStyle(engine.state == .running ? Color.green : Color.secondary)
         }
         .padding(18)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: 18))

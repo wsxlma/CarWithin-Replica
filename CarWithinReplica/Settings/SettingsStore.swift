@@ -79,6 +79,12 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "carplay.vehicleIcon") }
     }
 
+    // 日志
+    static var logLevel: String {
+        get { string("log.level", "详细") }
+        set { defaults.set(newValue, forKey: "log.level") }
+    }
+
     // 后台与画中画
     static var lockBackground: Bool {
         get { flag("pip.lockBackground", true) }

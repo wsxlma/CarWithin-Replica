@@ -15,7 +15,14 @@ final class DiagnosticsLog: ObservableObject {
 
     private let limit = 2000
 
-    func append(_ message: String) {
+    enum Level: String {
+        case verbose, error
+    }
+
+    func append(_ message: String, level: Level = .verbose) {
+        let setting = SettingsStore.logLevel
+        if setting == "无" { return }
+        if setting == "错误", level != .error { return }
         let stamp = formatter.string(from: Date())
         lines.append("[\(stamp)] \(message)")
         if lines.count > limit {

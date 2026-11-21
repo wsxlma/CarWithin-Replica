@@ -221,6 +221,22 @@ final class ReceiverViewController: SettingsPageController {
             pushRow("诊断与实验", symbol: "stethoscope", tint: .systemTeal) {
                 DiagnosticsViewController()
             },
+            pushRow("日志级别", symbol: "text.alignleft", tint: .systemGray,
+                    detail: { SettingsStore.logLevel },
+                    accessory: .upDown) {
+                SelectionViewController(
+                    title: "日志级别",
+                    options: [
+                        .init(id: "详细", title: "详细", subtitle: "打印每一步与所有回包"),
+                        .init(id: "错误", title: "错误", subtitle: "只打印出错信息"),
+                        .init(id: "无", title: "无", subtitle: "不记录日志"),
+                    ],
+                    current: { SettingsStore.logLevel },
+                    onSelect: { SettingsStore.logLevel = $0 })
+            },
+            SettingsRow("导出日志", symbol: "square.and.arrow.up", tint: .systemBlue) { [weak self] in
+                self?.exportLog()
+            },
         ]
     }
 }
