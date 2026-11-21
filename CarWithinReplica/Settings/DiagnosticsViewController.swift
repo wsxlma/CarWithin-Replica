@@ -28,7 +28,11 @@ final class DiagnosticsViewController: UIViewController {
         clear.setTitleColor(.systemRed, for: .normal)
         clear.addTarget(self, action: #selector(clearAll), for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [copy, clear])
+        let probe = UIButton(type: .system)
+        probe.setTitle("探测私有传输", for: .normal)
+        probe.addTarget(self, action: #selector(runProbe), for: .touchUpInside)
+
+        let stack = UIStackView(arrangedSubviews: [probe, copy, clear])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal
         stack.spacing = 24
@@ -56,7 +60,15 @@ final class DiagnosticsViewController: UIViewController {
     }
 
     private func refresh() {
-        textView.text = log.lines.isEmpty ? "暂无日志。启动会话后会在这里显示。" : log.text
+        let header = "运行环境：\(TransportProbe.environmentSummary())\n\n"
+        let body = log.lines.isEmpty ? "暂无日志。启动会话后会在这里显示。" : log.text
+        textView.text = header + body
+    }
+
+    @objc private func runProbe() {
+        let report = TransportProbe.run()
+        log.append("[探测] \(report.summary) — \(report.detail)")
+        refresh()
     }
 
     @objc private func copyAll() {

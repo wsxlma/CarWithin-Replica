@@ -1,5 +1,7 @@
 # CarWithin Replica
 
+> 逐模块完成度对照见 [docs/PARITY.md](docs/PARITY.md)。
+
 按原版结构复刻的 CarWithin，**设置页只保留「诊断与实验」**。
 仓库自带 GitHub Actions，推上去即可产出未签名 IPA。
 
