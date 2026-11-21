@@ -152,6 +152,7 @@ final class BrowserOutput {
         </script>
         </html>
         """
+        let body = Data(html.utf8)
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
             + "Content-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         var response = Data(head.utf8)
