@@ -131,6 +131,16 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "video.autoRestart") }
     }
 
+    static var codec: String {
+        get { string("video.codec", "H.265") }
+        set { defaults.set(newValue, forKey: "video.codec") }
+    }
+
+    static var fps: Int {
+        get { defaults.object(forKey: "video.fps") as? Int ?? 60 }
+        set { defaults.set(newValue, forKey: "video.fps") }
+    }
+
     static var iconSize: String {
         get { string("video.iconSize", "默认（200 mm）") }
         set { defaults.set(newValue, forKey: "video.iconSize") }
