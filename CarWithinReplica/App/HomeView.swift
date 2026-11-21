@@ -344,6 +344,16 @@ struct HomeView: View {
                 )
         }
     }
+    /// 状态文案按 Wi-Fi 配置与运行状态变化，与原版一致。
+    private var statusText: String {
+        if engine.state == .running { return "正在推送" }
+        if wifiSSID.isEmpty { return "请选择 Wi-Fi 预设" }
+        if !wifiOpen && wifiPassword.isEmpty {
+            return "请输入 Wi-Fi 密码；开放网络请选择“无密码”。"
+        }
+        return "已停止"
+    }
+
 }
 
 /// 把 UIKit 的设置页装进 SwiftUI 的 sheet。
@@ -359,4 +369,5 @@ struct SettingsSheet: UIViewControllerRepresentable {
 
 #Preview {
     HomeView().environmentObject(DiagnosticsLog.shared)
+
 }

@@ -302,4 +302,16 @@ final class ReceiverViewController: SettingsPageController {
         controller.popoverPresentationController?.sourceView = view
         present(controller, animated: true)
     }
+
+    /// 用 SettingsPageController 快速拼一个二级页。
+    private func page(_ title: String,
+                      build: @escaping (SettingsPageController) -> [SettingsSection]) -> SettingsPageController {
+        let controller = SettingsPageController(title: title)
+        controller.buildSections = { [weak controller] in
+            guard let controller else { return [] }
+            return build(controller)
+        }
+        return controller
+    }
+
 }
