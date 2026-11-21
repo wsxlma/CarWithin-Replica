@@ -72,7 +72,7 @@ class SettingsPageController: UITableViewController {
 
         var content = cell.defaultContentConfiguration()
         content.text = row.title
-        content.secondaryText = row.detail
+        content.secondaryText = row.resolvedDetail
         content.image = row.icon
         content.textProperties.numberOfLines = 0
         content.secondaryTextProperties.numberOfLines = 0

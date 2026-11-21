@@ -19,14 +19,21 @@ struct SettingsRow {
 
     let title: String
     let detail: String?
+    let detailProvider: (() -> String?)?
     let icon: UIImage?
     let destructive: Bool
     let kind: Kind
 
-    private init(title: String, detail: String?, icon: UIImage?,
-                 destructive: Bool = false, kind: Kind) {
+    /// 原版的 detail 是闭包，副标题要能跟着设置变化。保留静态文案作为兜底。
+    var resolvedDetail: String? {
+        detailProvider?() ?? detail
+    }
+
+    private init(title: String, detail: String?, detailProvider: (() -> String?)?,
+                 icon: UIImage?, destructive: Bool = false, kind: Kind) {
         self.title = title
         self.detail = detail
+        self.detailProvider = detailProvider
         self.icon = icon
         self.destructive = destructive
         self.kind = kind
@@ -34,26 +41,32 @@ struct SettingsRow {
 
     // MARK: 工厂
 
-    static func page(_ title: String, icon: String? = nil, detail: String? = nil,
+    static func page(_ title: String, icon: String? = nil,
+                     detail: String? = nil, detailProvider: (() -> String?)? = nil,
                      _ make: @escaping () -> UIViewController) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, icon: icon.flatMap(iconImage), kind: .page(make))
+        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
+                    icon: icon.flatMap(iconImage), kind: .page(make))
     }
 
     static func externalLink(_ title: String, icon: String? = nil,
-                             detail: String? = nil, url: URL) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, icon: icon.flatMap(iconImage), kind: .external(url))
+                             detail: String? = nil, detailProvider: (() -> String?)? = nil,
+                             url: URL) -> SettingsRow {
+        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
+                    icon: icon.flatMap(iconImage), kind: .external(url))
     }
 
     static func action(_ title: String, icon: String? = nil, destructive: Bool = false,
-                       detail: String? = nil,
+                       detail: String? = nil, detailProvider: (() -> String?)? = nil,
                        _ handler: @escaping () -> Void) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, icon: icon.flatMap(iconImage),
-                    destructive: destructive, kind: .action(handler))
+        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
+                    icon: icon.flatMap(iconImage), destructive: destructive, kind: .action(handler))
     }
 
     static func control(_ title: String, icon: String? = nil,
+                        detail: String? = nil, detailProvider: (() -> String?)? = nil,
                         _ control: UIView) -> SettingsRow {
-        SettingsRow(title: title, detail: nil, icon: icon.flatMap(iconImage), kind: .control(control))
+        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
+                    icon: icon.flatMap(iconImage), kind: .control(control))
     }
 
     static func field(_ title: String, placeholder: String? = nil) -> SettingsRow {
@@ -62,19 +75,19 @@ struct SettingsRow {
         field.textAlignment = .right
         field.autocorrectionType = .no
         field.autocapitalizationType = .none
-        return SettingsRow(title: title, detail: nil, icon: nil, kind: .field(field))
+        return SettingsRow(title: title, detail: nil, detailProvider: nil, icon: nil, kind: .field(field))
     }
 
     static func info(_ text: String) -> SettingsRow {
-        SettingsRow(title: text, detail: nil, icon: nil, kind: .info)
+        SettingsRow(title: text, detail: nil, detailProvider: nil, icon: nil, kind: .info)
     }
 
     static func note(_ label: UILabel) -> SettingsRow {
-        SettingsRow(title: "", detail: nil, icon: nil, kind: .note(label))
+        SettingsRow(title: "", detail: nil, detailProvider: nil, icon: nil, kind: .note(label))
     }
 
     static func view(_ view: UIView) -> SettingsRow {
-        SettingsRow(title: "", detail: nil, icon: nil, kind: .custom(view))
+        SettingsRow(title: "", detail: nil, detailProvider: nil, icon: nil, kind: .custom(view))
     }
 
     static func guide(_ title: String, icon: String? = nil, text: String) -> SettingsRow {
