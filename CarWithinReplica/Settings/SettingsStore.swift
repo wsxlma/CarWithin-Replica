@@ -1,7 +1,6 @@
 import Foundation
 
-/// 轻量设置存储。原版把参数分散在 `ReceiverConfiguration` 与各处 UserDefaults 里，
-/// 这里统一一层读写，便于设置页的副标题实时反映当前值。
+/// 轻量设置存储。默认值取自真机截图，保证首次打开与原版观感一致。
 enum SettingsStore {
     private static let defaults = UserDefaults.standard
 
@@ -9,9 +8,13 @@ enum SettingsStore {
         defaults.string(forKey: key) ?? fallback
     }
 
-    // 连接
+    private static func flag(_ key: String, _ fallback: Bool) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? fallback
+    }
+
+    // 连接与输出
     static var wifiSSID: String {
-        get { string("wifi.ssid", "未设置") }
+        get { string("wifi.ssid", "") }
         set { defaults.set(newValue, forKey: "wifi.ssid") }
     }
 
@@ -40,60 +43,6 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "output.port") }
     }
 
-    // 画面
-    static var followReceiver: Bool {
-        get { defaults.object(forKey: "video.follow") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "video.follow") }
-    }
-
-    static var resolution: String {
-        get { string("video.resolution", "跟随车机") }
-        set { defaults.set(newValue, forKey: "video.resolution") }
-    }
-
-    static var fps: Int {
-        get { defaults.object(forKey: "video.fps") as? Int ?? 30 }
-        set { defaults.set(newValue, forKey: "video.fps") }
-    }
-
-    static var codec: String {
-        get { string("video.codec", "H.264") }
-        set { defaults.set(newValue, forKey: "video.codec") }
-    }
-
-    static var screenFit: String {
-        get { string("video.fit", "完整") }
-        set { defaults.set(newValue, forKey: "video.fit") }
-    }
-
-    // CarPlay
-    static var appearance: String {
-        get { string("carplay.appearance", "自动") }
-        set { defaults.set(newValue, forKey: "carplay.appearance") }
-    }
-
-    static var rightHandDrive: Bool {
-        get { defaults.object(forKey: "carplay.rhd") as? Bool ?? false }
-        set { defaults.set(newValue, forKey: "carplay.rhd") }
-    }
-
-    static var audioRoute: String {
-        get { string("carplay.audio", "由 iPhone 输出") }
-        set { defaults.set(newValue, forKey: "carplay.audio") }
-    }
-
-    // 后台与画中画
-    static var pipTiming: String {
-        get { string("pip.timing", "离开 App 时") }
-        set { defaults.set(newValue, forKey: "pip.timing") }
-    }
-
-    static var allowWhileLocked: Bool {
-        get { defaults.object(forKey: "pip.locked") as? Bool ?? false }
-        set { defaults.set(newValue, forKey: "pip.locked") }
-    }
-
-    // HTTPS
     static var httpsPort: String {
         get { string("https.port", "9889") }
         set { defaults.set(newValue, forKey: "https.port") }
@@ -102,6 +51,43 @@ enum SettingsStore {
     static var httpsMode: String {
         get { string("https.mode", "本地 IP") }
         set { defaults.set(newValue, forKey: "https.mode") }
+    }
+
+    // CarPlay
+    static var resolution: String {
+        get { string("video.resolution", "1080P") }
+        set { defaults.set(newValue, forKey: "video.resolution") }
+    }
+
+    static var appearance: String {
+        get { string("carplay.appearance", "跟随系统") }
+        set { defaults.set(newValue, forKey: "carplay.appearance") }
+    }
+
+    static var audioRoute: String {
+        get { string("carplay.audio", "Wi-Fi 伴音") }
+        set { defaults.set(newValue, forKey: "carplay.audio") }
+    }
+
+    static var drivingSide: String {
+        get { string("carplay.side", "左舵") }
+        set { defaults.set(newValue, forKey: "carplay.side") }
+    }
+
+    static var vehicleIcon: String {
+        get { string("carplay.vehicleIcon", "默认") }
+        set { defaults.set(newValue, forKey: "carplay.vehicleIcon") }
+    }
+
+    // 后台与画中画
+    static var lockBackground: Bool {
+        get { flag("pip.lockBackground", true) }
+        set { defaults.set(newValue, forKey: "pip.lockBackground") }
+    }
+
+    static var pipTiming: String {
+        get { string("pip.timing", "离开 App 时") }
+        set { defaults.set(newValue, forKey: "pip.timing") }
     }
 }
 

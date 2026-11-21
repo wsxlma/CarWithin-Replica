@@ -1,13 +1,116 @@
 import UIKit
 
-/// 与原版 `TDSCarKit.SettingsPageController` 对齐：一个 `UITableViewController`，
-/// 分组内容由 `build` 闭包提供，`reload()` 时重建。
+final class SettingsCell: UITableViewCell {
+    static let reuseID = "SettingsCell"
+
+    private let iconView = UIImageView()
+    private let titleLabel = UILabel()
+    private let detailLabel = UILabel()
+    private let chevronView = UIImageView()
+    private let toggle = UISwitch()
+    private var toggleHandler: ((Bool) -> Void)?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .secondarySystemGroupedBackground
+        selectionStyle = .default
+
+        iconView.contentMode = .scaleAspectFit
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = .systemFont(ofSize: 17)
+        titleLabel.textColor = .label
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        detailLabel.font = .systemFont(ofSize: 16)
+        detailLabel.textColor = .secondaryLabel
+        detailLabel.textAlignment = .right
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        chevronView.image = UIImage(systemName: "chevron.right")
+        chevronView.tintColor = .tertiaryLabel
+        chevronView.contentMode = .scaleAspectFit
+        chevronView.translatesAutoresizingMaskIntoConstraints = false
+
+        toggle.addTarget(self, action: #selector(toggled), for: .valueChanged)
+
+        contentView.addSubview(iconView)
+        contentView.addSubview(titleLabel)
+        contentView.addSubview(detailLabel)
+        contentView.addSubview(chevronView)
+
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            iconView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 29),
+            iconView.heightAnchor.constraint(equalToConstant: 29),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+
+            detailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
+            detailLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+
+            chevronView.leadingAnchor.constraint(equalTo: detailLabel.trailingAnchor, constant: 6),
+            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            chevronView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            chevronView.widthAnchor.constraint(equalToConstant: 12),
+
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) 未实现")
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        toggleHandler = nil
+        accessoryView = nil
+    }
+
+    func configure(with row: SettingsRow) {
+        titleLabel.text = row.title
+        iconView.image = SettingsIcon.tile(row.symbol, tint: row.tint)
+        detailLabel.text = row.resolvedDetail
+
+        toggleHandler = nil
+        accessoryView = nil
+        chevronView.isHidden = true
+        chevronView.image = UIImage(systemName: "chevron.right")
+        detailLabel.isHidden = false
+        accessoryType = .none
+        selectionStyle = row.handler == nil ? .none : .default
+
+        switch row.accessory {
+        case .chevron:
+            chevronView.isHidden = false
+        case .upDown:
+            chevronView.image = UIImage(systemName: "chevron.up.chevron.down")
+            chevronView.isHidden = false
+        case .toggle(let isOn, let handler):
+            toggle.isOn = isOn
+            toggleHandler = handler
+            accessoryView = toggle
+            detailLabel.isHidden = true
+        case .none:
+            detailLabel.isHidden = (row.resolvedDetail == nil)
+        }
+    }
+
+    @objc private func toggled() {
+        toggleHandler?(toggle.isOn)
+    }
+}
+
+/// 与原版 `TDSCarKit.SettingsPageController` 对齐：`UITableViewController` + `build` 闭包。
 class SettingsPageController: UITableViewController {
     private var sections: [SettingsSection] = []
 
-    /// 子类在 `super.init` 之后赋值（闭包需要引用 self）。
     var buildSections: (() -> [SettingsSection])?
-
     var onAppear: (() -> Void)?
     var onLeave: (() -> Void)?
 
@@ -24,9 +127,10 @@ class SettingsPageController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
+        tableView.register(SettingsCell.self, forCellReuseIdentifier: SettingsCell.reuseID)
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 48
+        tableView.estimatedRowHeight = 50
+        tableView.backgroundColor = .systemGroupedBackground
         reload()
     }
 
@@ -45,6 +149,18 @@ class SettingsPageController: UITableViewController {
         sections = buildSections?() ?? []
         guard isViewLoaded else { return }
         tableView.reloadData()
+    }
+
+    /// 供子类构造「点击后 push」的行。
+    func pushRow(_ title: String,
+                 symbol: String,
+                 tint: UIColor,
+                 detail: (() -> String?)? = nil,
+                 accessory: SettingsRow.Accessory = .chevron,
+                 make: @escaping () -> UIViewController) -> SettingsRow {
+        SettingsRow(title, symbol: symbol, tint: tint, detail: detail, accessory: accessory) { [weak self] in
+            self?.navigationController?.pushViewController(make(), animated: true)
+        }
     }
 
     // MARK: - 数据源
@@ -67,59 +183,15 @@ class SettingsPageController: UITableViewController {
 
     override func tableView(_ tableView: UITableView,
                             cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let row = sections[indexPath.section].rows[indexPath.row]
-        let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
-
-        var content = cell.defaultContentConfiguration()
-        content.text = row.title
-        content.secondaryText = row.resolvedDetail
-        content.image = row.icon
-        content.textProperties.numberOfLines = 0
-        content.secondaryTextProperties.numberOfLines = 0
-        if row.destructive {
-            content.textProperties.color = .systemRed
-        }
-        cell.contentConfiguration = content
-
-        cell.accessoryView = nil
-        cell.accessoryType = .none
-        cell.selectionStyle = .default
-
-        switch row.kind {
-        case .page, .external, .action:
-            cell.accessoryType = .disclosureIndicator
-        case .control(let control):
-            cell.accessoryView = control
-            cell.selectionStyle = .none
-        case .field(let field):
-            cell.accessoryView = field
-            field.frame = CGRect(x: 0, y: 0, width: 180, height: 32)
-            cell.selectionStyle = .none
-        case .info:
-            cell.selectionStyle = .none
-        case .note(let label):
-            cell.accessoryView = label
-            cell.selectionStyle = .none
-        case .custom(let view):
-            cell.accessoryView = view
-            cell.selectionStyle = .none
+        let cell = tableView.dequeueReusableCell(withIdentifier: SettingsCell.reuseID, for: indexPath)
+        if let cell = cell as? SettingsCell {
+            cell.configure(with: sections[indexPath.section].rows[indexPath.row])
         }
         return cell
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        let row = sections[indexPath.section].rows[indexPath.row]
         tableView.deselectRow(at: indexPath, animated: true)
-
-        switch row.kind {
-        case .page(let make):
-            navigationController?.pushViewController(make(), animated: true)
-        case .external(let url):
-            UIApplication.shared.open(url)
-        case .action(let handler):
-            handler()
-        case .control, .field, .info, .note, .custom:
-            break
-        }
+        sections[indexPath.section].rows[indexPath.row].handler?()
     }
 }

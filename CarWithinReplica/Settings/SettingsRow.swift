@@ -1,137 +1,81 @@
 import UIKit
 
-/// 与原版 `TDSCarKit.SettingsRow` 同构的行模型。
-///
-/// 原版通过一组工厂方法构造行（符号表里可见）：
-/// `page(_:icon:detail:)`、`externalLink(_:icon:detail:)`、`action(_:icon:destructive:detail:)`、
-/// `control(_:icon:)`、`field(_:placeholder:)`、`info(_:)`、`note(_:)`、`view(_:)`、`guide(_:icon:)`。
+/// 一行设置项。图标是「圆角色块 + 白色 SF Symbol」，与原版一致。
 struct SettingsRow {
-    enum Kind {
-        case page(() -> UIViewController)
-        case external(URL)
-        case action(() -> Void)
-        case control(UIView)
-        case field(UITextField)
-        case info
-        case note(UILabel)
-        case custom(UIView)
+    enum Accessory {
+        case none
+        case chevron
+        case upDown                       // 右侧上下箭头，表示可切换的枚举
+        case toggle(Bool, (Bool) -> Void)
     }
 
     let title: String
-    let detail: String?
-    let detailProvider: (() -> String?)?
-    let icon: UIImage?
-    let destructive: Bool
-    let kind: Kind
+    let detail: (() -> String?)?
+    let symbol: String
+    let tint: UIColor
+    let accessory: Accessory
+    let handler: (() -> Void)?
 
-    /// 原版的 detail 是闭包，副标题要能跟着设置变化。保留静态文案作为兜底。
-    var resolvedDetail: String? {
-        detailProvider?() ?? detail
-    }
-
-    private init(title: String, detail: String?, detailProvider: (() -> String?)?,
-                 icon: UIImage?, destructive: Bool = false, kind: Kind) {
+    init(_ title: String,
+         symbol: String,
+         tint: UIColor,
+         detail: (() -> String?)? = nil,
+         accessory: Accessory = .chevron,
+         handler: (() -> Void)? = nil) {
         self.title = title
+        self.symbol = symbol
+        self.tint = tint
         self.detail = detail
-        self.detailProvider = detailProvider
-        self.icon = icon
-        self.destructive = destructive
-        self.kind = kind
+        self.accessory = accessory
+        self.handler = handler
     }
 
-    // MARK: 工厂
-
-    static func page(_ title: String, icon: String? = nil,
-                     detail: String? = nil, detailProvider: (() -> String?)? = nil,
-                     _ make: @escaping () -> UIViewController) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
-                    icon: icon.flatMap(iconImage), kind: .page(make))
-    }
-
-    static func externalLink(_ title: String, icon: String? = nil,
-                             detail: String? = nil, detailProvider: (() -> String?)? = nil,
-                             url: URL) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
-                    icon: icon.flatMap(iconImage), kind: .external(url))
-    }
-
-    static func action(_ title: String, icon: String? = nil, destructive: Bool = false,
-                       detail: String? = nil, detailProvider: (() -> String?)? = nil,
-                       _ handler: @escaping () -> Void) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
-                    icon: icon.flatMap(iconImage), destructive: destructive, kind: .action(handler))
-    }
-
-    static func control(_ title: String, icon: String? = nil,
-                        detail: String? = nil, detailProvider: (() -> String?)? = nil,
-                        _ control: UIView) -> SettingsRow {
-        SettingsRow(title: title, detail: detail, detailProvider: detailProvider,
-                    icon: icon.flatMap(iconImage), kind: .control(control))
-    }
-
-    static func field(_ title: String, placeholder: String? = nil) -> SettingsRow {
-        let field = UITextField()
-        field.placeholder = placeholder
-        field.textAlignment = .right
-        field.autocorrectionType = .no
-        field.autocapitalizationType = .none
-        return SettingsRow(title: title, detail: nil, detailProvider: nil, icon: nil, kind: .field(field))
-    }
-
-    static func info(_ text: String) -> SettingsRow {
-        SettingsRow(title: text, detail: nil, detailProvider: nil, icon: nil, kind: .info)
-    }
-
-    static func note(_ label: UILabel) -> SettingsRow {
-        SettingsRow(title: "", detail: nil, detailProvider: nil, icon: nil, kind: .note(label))
-    }
-
-    static func view(_ view: UIView) -> SettingsRow {
-        SettingsRow(title: "", detail: nil, detailProvider: nil, icon: nil, kind: .custom(view))
-    }
-
-    static func guide(_ title: String, icon: String? = nil, text: String) -> SettingsRow {
-        page(title, icon: icon) { GuideViewController(title: title, text: text) }
-    }
-
-    private static func iconImage(_ name: String) -> UIImage? {
-        SettingsIcon.image(name, color: .secondaryLabel)
+    var resolvedDetail: String? {
+        detail?()
     }
 }
 
-/// 简易说明页，对应原版 guide 型行打开的内容。
-final class GuideViewController: UIViewController {
-    private let body: String
+struct SettingsSection {
+    let header: String?
+    let footer: String?
+    let rows: [SettingsRow]
 
-    init(title: String, text: String) {
-        self.body = text
-        super.init(nibName: nil, bundle: nil)
-        self.title = title
+    init(_ header: String?, footer: String? = nil, rows: [SettingsRow]) {
+        self.header = header
+        self.footer = footer
+        self.rows = rows
+    }
+}
+
+/// 原版图标是彩色圆角方块。这里统一渲染，避免每行单独处理。
+enum SettingsIcon {
+    private static var cache: [String: UIImage] = [:]
+
+    static func image(_ symbol: String, tint: UIColor) -> UIImage? {
+        UIImage(systemName: symbol)
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) 未实现") }
+    static func tile(_ symbol: String, tint: UIColor, size: CGFloat = 29) -> UIImage? {
+        let key = "\(symbol)|\(tint.description)|\(size)"
+        if let cached = cache[key] { return cached }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
+        let rect = CGRect(x: 0, y: 0, width: size, height: size)
+        let renderer = UIGraphicsImageRenderer(size: rect.size)
+        let image = renderer.image { context in
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: size * 0.24)
+            tint.setFill()
+            path.fill()
 
-        let textView = UITextView()
-        textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.isEditable = false
-        textView.alwaysBounceVertical = true
-        textView.backgroundColor = .secondarySystemGroupedBackground
-        textView.layer.cornerRadius = 12
-        textView.textContainerInset = UIEdgeInsets(top: 16, left: 14, bottom: 16, right: 14)
-        textView.font = .preferredFont(forTextStyle: .body)
-        textView.text = body
-        view.addSubview(textView)
-
-        NSLayoutConstraint.activate([
-            textView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-        ])
+            let configuration = UIImage.SymbolConfiguration(pointSize: size * 0.55, weight: .semibold)
+            guard let glyph = UIImage(systemName: symbol, withConfiguration: configuration)?
+                .withTintColor(.white, renderingMode: .alwaysOriginal) else { return }
+            let glyphSize = glyph.size
+            let origin = CGPoint(x: (size - glyphSize.width) / 2,
+                                 y: (size - glyphSize.height) / 2)
+            glyph.draw(at: origin)
+            _ = context
+        }
+        cache[key] = image
+        return image
     }
 }

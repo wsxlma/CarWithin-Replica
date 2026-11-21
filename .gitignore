@@ -10,3 +10,4 @@ out/
 artifact.zip
 artifact-out/
 *.ipa
+analysis/
