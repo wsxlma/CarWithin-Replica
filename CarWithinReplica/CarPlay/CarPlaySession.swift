@@ -8,6 +8,7 @@ import ObjectiveC
 enum ACCBridge {
     static let frameworkPath =
         "/System/Library/PrivateFrameworks/CoreAccessories.framework/CoreAccessories"
+    static let endpointSelector = "createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:"
 
     static var isAvailable: Bool {
         guard let handle = dlopen(frameworkPath, RTLD_NOW) else { return false }
@@ -15,32 +16,122 @@ enum ACCBridge {
         return NSClassFromString("ACCTransportClient") != nil
     }
 
-    /// 把 ACCTransportClient 的方法名全部导出，便于按真机结果补齐调用。
+    /// 把方法名和类型编码一起导出。类型编码就是参数表，不需要真的调用。
     static func selectorDump() -> String {
         guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
             return "CoreAccessories 加载失败：\(dlerror().map { String(cString: $0) } ?? "未知")"
         }
         defer { dlclose(handle) }
-
         guard let cls = NSClassFromString("ACCTransportClient") else {
             return "未找到 ACCTransportClient"
         }
 
-        var names: [String] = []
+        var lines: [String] = []
         var count: UInt32 = 0
+
         if let methods = class_copyMethodList(cls, &count) {
             for index in 0..<Int(count) {
-                names.append(NSStringFromSelector(method_getName(methods[index])))
+                let method = methods[index]
+                let name = NSStringFromSelector(method_getName(method))
+                lines.append("- " + name + "  " + signature(of: method))
             }
             free(UnsafeMutableRawPointer(methods))
         }
         if let meta = object_getClass(cls), let methods = class_copyMethodList(meta, &count) {
             for index in 0..<Int(count) {
-                names.append("+" + NSStringFromSelector(method_getName(methods[index])))
+                let method = methods[index]
+                let name = NSStringFromSelector(method_getName(method))
+                lines.append("+ " + name + "  " + signature(of: method))
             }
             free(UnsafeMutableRawPointer(methods))
         }
-        return names.isEmpty ? "ACCTransportClient 无可见方法" : names.sorted().joined(separator: "\n")
+        return lines.sorted().joined(separator: "\n")
+    }
+
+    /// 只输出 endpoint 方法的参数表，便于直接照抄调用。
+    static func endpointSignature() -> String {
+        guard let handle = dlopen(frameworkPath, RTLD_NOW) else { return "CoreAccessories 加载失败" }
+        defer { dlclose(handle) }
+        guard let cls = NSClassFromString("ACCTransportClient") else { return "未找到 ACCTransportClient" }
+
+        let selector = NSSelectorFromString(endpointSelector)
+        var result = "未找到 \(endpointSelector)"
+
+        if let method = class_getInstanceMethod(cls, selector) {
+            result = "createEndpoint 参数表：\n" + signature(of: method)
+        } else if let meta = object_getClass(cls),
+                  let method = class_getInstanceMethod(meta, selector) {
+            result = "createEndpoint（类方法）参数表：\n" + signature(of: method)
+        }
+        return result
+    }
+
+    private static func signature(of method: Method) -> String {
+        guard let encoding = method_getTypeEncoding(method) else { return "（无类型编码）" }
+        let raw = String(cString: encoding)
+        let tokens = decode(raw)
+        return "返回 \(tokens.first ?? "?")  参数 [\(tokens.dropFirst().joined(separator: ", "))]  原始 \(raw)"
+    }
+
+    /// 解析 Objective-C 类型编码为可读 token。
+    private static func decode(_ encoding: String) -> [String] {
+        var tokens: [String] = []
+        var index = encoding.startIndex
+        let qualifiers: Set<Character> = ["r", "n", "N", "o", "O", "R", "V"]
+
+        while index < encoding.endIndex {
+            let char = encoding[index]
+            if qualifiers.contains(char) || char.isNumber {
+                index = encoding.index(after: index)
+                continue
+            }
+            switch char {
+            case "@":
+                var next = encoding.index(after: index)
+                if next < encoding.endIndex, encoding[next] == "?" {
+                    tokens.append("@?")
+                    index = encoding.index(after: next)
+                } else if next < encoding.endIndex, encoding[next] == "\"" {
+                    var name = ""
+                    next = encoding.index(after: next)
+                    while next < encoding.endIndex, encoding[next] != "\"" {
+                        name.append(encoding[next])
+                        next = encoding.index(after: next)
+                    }
+                    if next < encoding.endIndex { next = encoding.index(after: next) }
+                    tokens.append("@\"\(name)\"")
+                    index = next
+                } else {
+                    tokens.append("@")
+                    index = next
+                }
+            case "^":
+                var next = encoding.index(after: index)
+                var text = "^"
+                if next < encoding.endIndex {
+                    text.append(encoding[next])
+                    next = encoding.index(after: next)
+                }
+                tokens.append(text)
+                index = next
+            case "{", "(":
+                let closing: Character = char == "{" ? "}" : ")"
+                var next = index
+                var text = ""
+                while next < encoding.endIndex {
+                    text.append(encoding[next])
+                    let done = encoding[next] == closing
+                    next = encoding.index(after: next)
+                    if done { break }
+                }
+                tokens.append(text)
+                index = next
+            default:
+                tokens.append(String(char))
+                index = encoding.index(after: index)
+            }
+        }
+        return tokens
     }
 }
 
@@ -155,6 +246,7 @@ final class CarPlaySession {
         }
         onLog?("CoreAccessories：\(ACCBridge.isAvailable ? "可用" : "不可用（仍尝试自建通道）")")
         if SettingsStore.logLevel == "详细" {
+            onLog?(ACCBridge.endpointSignature())
             onLog?("ACCTransportClient 方法列表：\n" + ACCBridge.selectorDump())
         }
 
