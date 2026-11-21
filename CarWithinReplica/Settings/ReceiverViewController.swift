@@ -18,12 +18,23 @@ final class ReceiverViewController: SettingsPageController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: UIImage(systemName: "checkmark.circle.fill"),
-            style: .done,
-            target: self,
-            action: #selector(closeSheet))
-        navigationItem.rightBarButtonItem?.tintColor = .systemBlue
+        let close = UIButton(type: .system)
+        close.setImage(UIImage(systemName: "checkmark",
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)),
+                       for: .normal)
+        close.tintColor = .white
+        close.frame = CGRect(x: 0, y: 0, width: 34, height: 34)
+        close.layer.cornerRadius = 17
+        close.layer.cornerCurve = .continuous
+        close.clipsToBounds = true
+        close.addTarget(self, action: #selector(closeSheet), for: .touchUpInside)
+
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+        blur.frame = close.bounds
+        blur.isUserInteractionEnabled = false
+        close.insertSubview(blur, at: 0)
+
+        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: close)
         navigationController?.navigationBar.prefersLargeTitles = false
     }
 
@@ -83,6 +94,24 @@ final class ReceiverViewController: SettingsPageController {
                     detail: { SettingsStore.wifiSSID.isEmpty ? "未选择" : SettingsStore.wifiSSID }) {
                 WiFiPresetsViewController()
             },
+
+            pushRow("兼容信道", symbol: "antenna.radiowaves.left.and.right", tint: .systemBlue,
+                    detail: { SettingsStore.wifiChannel },
+                    accessory: .upDown) {
+                SelectionViewController(
+                    title: "兼容信道",
+                    options: ["自动", "1", "6", "11", "36", "44", "149"]
+                        .map { SelectionViewController.Option(id: $0, title: $0, subtitle: nil) },
+                    current: { SettingsStore.wifiChannel },
+                    onSelect: { SettingsStore.wifiChannel = $0 })
+            },
+
+            SettingsRow("开放网络", symbol: "lock.open", tint: .systemOrange,
+                        detail: { SettingsStore.wifiOpen ? "无密码" : nil },
+                        accessory: .toggle(SettingsStore.wifiOpen) { isOn in
+                            SettingsStore.wifiOpen = isOn
+                            if isOn { SettingsStore.wifiPassword = "" }
+                        }),
 
             pushRow("当前输出", symbol: "square.and.arrow.up", tint: .systemPurple,
                     detail: { OutputMode.title(for: SettingsStore.output) },

@@ -13,6 +13,8 @@ struct HomeView: View {
     @AppStorage("output.mode") private var outputMode: String = "browser"
     @AppStorage("output.host") private var receiverHost: String = "192.168.1.1"
     @AppStorage("output.port") private var receiverPort: String = "9888"
+    @AppStorage("wifi.ssid") private var wifiSSID: String = ""
+    @AppStorage("wifi.open") private var wifiOpen: Bool = false
 
     private let cardBackground = Color(red: 0.11, green: 0.11, blue: 0.12)
 
@@ -37,8 +39,9 @@ struct HomeView: View {
                         Image(systemName: "gearshape.fill")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(Color(white: 0.22), in: Circle())
+                            .frame(width: 38, height: 38)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
                     }
                 }
             }
@@ -95,22 +98,31 @@ struct HomeView: View {
                 .font(.system(size: 16, weight: .semibold))
 
             Button {
-                Task {
-                    do {
-                        try await engine.start(configuration: .placeholder)
-                    } catch {
-                        diagnostics.append("启动失败：\(error.localizedDescription)")
-                        showEngineAlert = true
+                if engine.state == .running {
+                    engine.stop()
+                } else {
+                    Task {
+                        do {
+                            try await engine.start(configuration: .placeholder)
+                        } catch {
+                            diagnostics.append("启动失败：\(error.localizedDescription)", level: .error)
+                            showEngineAlert = true
+                        }
                     }
                 }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "play.fill")
-                    Text("启动本机 CarPlay").font(.system(size: 18, weight: .semibold))
+                    Image(systemName: engine.state == .running ? "stop.fill" : "play.fill")
+                    Text(engine.state == .running ? "停止 CarPlay 推送" : "启动本机 CarPlay")
+                        .font(.system(size: 18, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(Color(red: 0.04, green: 0.52, blue: 1.0), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.vertical, 15)
+                .background(
+                    engine.state == .running
+                    ? Color(red: 0.72, green: 0.20, blue: 0.22)
+                    : Color(red: 0.04, green: 0.52, blue: 1.0),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
@@ -118,9 +130,45 @@ struct HomeView: View {
             Text("\(engine.state.title) · \(engine.state.detail)")
                 .font(.system(size: 14))
                 .foregroundStyle(engine.state == .running ? Color.green : Color.secondary)
+
+            if engine.state == .running {
+                Divider().overlay(Color.white.opacity(0.08))
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("当前 Wi-Fi").font(.system(size: 13)).foregroundStyle(.secondary)
+                        Text(wifiSSID.isEmpty ? "未连接" : wifiSSID)
+                            .font(.system(size: 16, weight: .medium))
+                        if wifiOpen {
+                            Text("开放网络 · 无密码")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Text("编辑 Wi-Fi")
+                            .font(.system(size: 15, weight: .medium))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .background(Color.white.opacity(0.10), in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                            .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(18)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 18))
+        .background {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        }
     }
 
     // 当前输出对应的卡片。原版不是固定展示「九号 5 寸」，而是跟着设置变化。
@@ -195,7 +243,14 @@ struct HomeView: View {
             .buttonStyle(.plain)
         }
         .padding(18)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 18))
+        .background {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        }
     }
 }
 

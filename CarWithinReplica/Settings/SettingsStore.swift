@@ -23,6 +23,16 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "wifi.password") }
     }
 
+    static var wifiChannel: String {
+        get { string("wifi.channel", "自动") }
+        set { defaults.set(newValue, forKey: "wifi.channel") }
+    }
+
+    static var wifiOpen: Bool {
+        get { flag("wifi.open", false) }
+        set { defaults.set(newValue, forKey: "wifi.open") }
+    }
+
     static var presets: [String] {
         get { defaults.stringArray(forKey: "wifi.presets") ?? [] }
         set { defaults.set(newValue, forKey: "wifi.presets") }
