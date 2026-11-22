@@ -212,12 +212,8 @@ final class DirectAccessoryTransport: NSObject {
     }
 
     func stop() {
-        if let endpointUUID {
-            _ = ACCBridge.destroyEndpoint(uuid: endpointUUID)
-        }
-        if let connectionUUID {
-            _ = ACCBridge.destroyConnection(uuid: connectionUUID)
-        }
+        // 不调用 destroyEndpoint/destroyConnection：ACC 在状态不对时会抛 ObjC 异常
+        // （真机崩溃栈：手势处理 → rethrow → abort）。只解除引用，让系统自己回收。
         client = nil
         endpointUUID = nil
         connectionUUID = nil
