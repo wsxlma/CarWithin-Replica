@@ -210,9 +210,16 @@ enum ACCBridge {
         }
         typealias ConnectionFn = @convention(c) (AnyObject, Selector, Int32, NSString) -> AnyObject?
         guard let created = unsafeBitCast(connectionIMP, to: ConnectionFn.self)(
-            client, connectionSelector, 0, "CarWithin" as NSString),
-              let uuid = created as? NSUUID else {
-            return steps + ["createConnection 没拿到 UUID"]
+            client, connectionSelector, 0, "CarWithin" as NSString) else {
+            return steps + ["createConnection 返回 nil"]
+        }
+        let uuid: NSUUID
+        if let value = created as? NSUUID {
+            uuid = value
+        } else if let text = created as? String, let parsed = UUID(uuidString: text) {
+            uuid = parsed as NSUUID
+        } else {
+            return steps + ["createConnection 返回值不是 UUID：\(created)"]
         }
         steps.append("connection → \(uuid)")
 
