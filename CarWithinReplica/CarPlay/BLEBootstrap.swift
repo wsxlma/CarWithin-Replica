@@ -1,28 +1,31 @@
 import Foundation
 import CoreBluetooth
 
-/// BLE 引导：复刻原版 `TDSCarKit.BLEBootstrap`。
+/// BLE 引导：复刻原版 `TDSCarKit.BLEBootstrap` 的完整形态。
 ///
-/// 原版从二进制里能挖到的完整形态：
-///   CBPeripheralManager 广播服务 0xFC94（外加 0xF20BFCDB…）
-///   publishL2CAPChannel 发布 L2CAP 通道（iAP2 over BLE 的传输层）
-///   对端连入后，iAP2 字节流走 L2CAP
+/// 原版做的事（从二进制符号还原）：
+///   1. CBMutableService + CBMutableCharacteristic 注册 GATT 服务
+///   2. publishL2CAPChannel 发布 L2CAP（iAP2 over BLE 的数据通道）
+///   3. startAdvertising 广播服务 UUID
+///   4. didReceiveRead/WriteRequests 收发 BLEFrame(type,payload)，内层是 iAP2
 ///
-/// iPhone 的 CarPlay 栈靠这个 BLE 广播发现「车机」，然后弹出
-/// 「连接 CarPlay 车载」系统弹窗——光有 Bonjour 是不够的。
+/// 关键：只 startAdvertising 不 addService 是不行的——iPhone 扫到广播后
+/// 会去读 GATT，服务不存在就直接忽略，配对框也就不会弹。
 final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
     static let shared = BLEBootstrap()
     var onLog: ((String) -> Void)?
 
-    /// 原版广播的两个服务 UUID（strings 里挖到，紧挨着 `/L2CAP`）。
-    private let advertisedServiceIDs: [CBUUID] = [
-        CBUUID(string: "0000FC94-0000-1000-8000-00805F9B34FB"),
-        CBUUID(string: "F20BFCDB-B5B1-484F-AFBA-29DDE86C972E"),
-    ]
+    /// 原版广播的服务 UUID（16-bit 0xFC94）。
+    private let serviceUUID = CBUUID(string: "0000FC94-0000-1000-8000-00805F9B34FB")
+    /// 原版 strings 里与之相邻的第二个 UUID，作数据特征。
+    private let characteristicUUID = CBUUID(string: "F20BFCDB-B5B1-484F-AFBA-29DDE86C972E")
 
     private var manager: CBPeripheralManager?
     private var psmID: CBL2CAPPSM?
+    private var characteristic: CBMutableCharacteristic?
+    private var subscribed: [CBCentral] = []
     private var links: [L2CAPLink] = []
+    private var frameParser = BLEFrameParser()
 
     private override init() { super.init() }
 
@@ -32,7 +35,7 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         stop()
-        onLog?("[BLE] 启动外设广播（服务 0xFC94 + L2CAP）")
+        onLog?("[BLE] 启动外设（GATT 服务 0xFC94 + L2CAP + 广播）")
         manager = CBPeripheralManager(delegate: self, queue: .main)
     }
 
@@ -42,9 +45,12 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         manager?.stopAdvertising()
+        manager?.removeAllServices()
         if let psmID { manager?.unpublishL2CAPChannel(psmID) }
         manager = nil
         self.psmID = nil
+        characteristic = nil
+        subscribed.removeAll()
         links.forEach { $0.close() }
         links.removeAll()
     }
@@ -67,24 +73,33 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         guard peripheral.state == .poweredOn else { return }
-        // L2CAP 是 iAP2 over BLE 的传输层，先发布通道再广播（原版顺序）。
+
+        // 1) 先发布 L2CAP 数据通道
         peripheral.publishL2CAPChannel(withEncryption: false)
+
+        // 2) 再注册 GATT 服务（缺了这步，iPhone 不会认这个外设）
+        let characteristic = CBMutableCharacteristic(
+            type: characteristicUUID,
+            properties: [.read, .write, .writeWithoutResponse, .notify, .indicate],
+            value: nil,
+            permissions: [.readable, .writeable])
+        let service = CBMutableService(type: serviceUUID, primary: true)
+        service.characteristics = [characteristic]
+        self.characteristic = characteristic
+        peripheral.add(service)
+        onLog?("[BLE] GATT 服务已注册：0xFC94 / 特征 F20BFCDB")
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
-                           didPublishL2CAPChannel PSM: CBL2CAPPSM,
-                           error: Error?) {
+                           didAdd service: CBService, error: Error?) {
         if let error {
-            onLog?("[BLE] L2CAP 发布失败：\(error.localizedDescription)")
+            onLog?("[BLE] GATT 服务添加失败：\(error.localizedDescription)")
             return
         }
-        psmID = PSM
-        onLog?("[BLE] L2CAP 通道已发布 PSM=\(PSM)")
-
-        let name = CarPlayConfiguration.vehicleName
+        onLog?("[BLE] GATT 服务已添加，开始广播")
         let advertisement: [String: Any] = [
-            CBAdvertisementDataLocalNameKey: name,
-            CBAdvertisementDataServiceUUIDsKey: advertisedServiceIDs,
+            CBAdvertisementDataLocalNameKey: CarPlayConfiguration.vehicleName,
+            CBAdvertisementDataServiceUUIDsKey: [serviceUUID, characteristicUUID],
         ]
         peripheral.startAdvertising(advertisement)
     }
@@ -95,26 +110,161 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         onLog?("[BLE] 广播已启动：\(CarPlayConfiguration.vehicleName) · 服务 0xFC94")
-        onLog?("[BLE] 等待 iOS 的 CarPlay 栈发现并弹出「连接 CarPlay 车载」")
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
-                           didOpen channel: CBL2CAPChannel?,
-                           error: Error?) {
+                           didPublishL2CAPChannel PSM: CBL2CAPPSM, error: Error?) {
         if let error {
-            onLog?("[BLE] L2CAP 连入失败：\(error.localizedDescription)")
+            onLog?("[BLE] L2CAP 发布失败：\(error.localizedDescription)")
             return
         }
-        guard let channel else { return }
-        onLog?("[BLE] L2CAP 已连入（PSM=\(self.psmID.map(String.init) ?? "?")）")
-        let link = L2CAPLink(channel: channel)
-        link.onLog = { [weak self] in self?.onLog?($0) }
-        links.append(link)
-        link.open()
+        psmID = PSM
+        onLog?("[BLE] L2CAP 通道已发布 PSM=\(PSM)")
+    }
+
+    func peripheralManager(_ peripheral: CBPeripheralManager,
+                           didReceiveRead request: CBATTRequest) {
+        // 读请求：回车机信息 + L2CAP PSM，iPhone 靠这个知道连哪个通道。
+        var payload = Data()
+        var ps = psmID ?? 0
+        payload.append(withUnsafeBytes(of: &ps) { Data($0) })
+        payload.append(Data(CarPlayConfiguration.vehicleName.utf8))
+        request.value = payload
+        peripheral.respond(to: request, withResult: .success)
+        onLog?("[BLE] 读请求已应答（\(payload.count)B，PSM=\(psmID.map(String.init) ?? "?")）")
+    }
+
+    func peripheralManager(_ peripheral: CBPeripheralManager,
+                           didReceiveWriteRequests requests: [CBATTRequest]) {
+        for request in requests {
+            if let value = request.value {
+                onLog?("[BLE] 收到写入 \(value.count)B")
+                consume(value, peripheral: peripheral)
+            }
+            peripheral.respond(to: request, withResult: .success)
+        }
+    }
+
+    func peripheralManager(_ peripheral: CBPeripheralManager,
+                           central: CBCentral,
+                           didSubscribeTo characteristic: CBCharacteristic) {
+        subscribed.append(central)
+        onLog?("[BLE] 对端已订阅特征（连接建立）")
+    }
+
+    func peripheralManager(_ peripheral: CBPeripheralManager,
+                           central: CBCentral,
+                           didUnsubscribeFrom characteristic: CBCharacteristic) {
+        subscribed.removeAll { $0.identifier == central.identifier }
+        onLog?("[BLE] 对端取消订阅")
+    }
+
+    // MARK: - BLEFrame ↔ iAP2
+
+    /// 特征值里的帧：`[type: UInt16 LE][length: UInt16 LE][payload]`，payload 是 iAP2。
+    private func consume(_ data: Data, peripheral: CBPeripheralManager) {
+        let frames = frameParser.append(data)
+        for frame in frames {
+            onLog?("[BLE] 帧 type=0x\(String(frame.type, radix: 16)) \(frame.payload.count)B")
+            handle(frame, peripheral: peripheral)
+        }
+    }
+
+    private func handle(_ frame: BLEFrame, peripheral: CBPeripheralManager) {
+        var parser = IAP2Parser()
+        parser.append(frame.payload)
+        while let packet = parser.next() {
+            onLog?("[BLE] iAP2 control=0x\(String(packet.control, radix: 16)) \(packet.payload.count)B")
+
+            if packet.control & 0x02 == 0 {
+                var reply = IAP2Packet.presence
+                reply.session = packet.session
+                send(reply, peripheral: peripheral)
+                continue
+            }
+
+            guard packet.payload.count >= 2 else { continue }
+            let start = packet.payload.startIndex
+            let messageID = (UInt16(packet.payload[start]) << 8) | UInt16(packet.payload[start + 1])
+            onLog?("[BLE] iAP2 消息 0x\(String(messageID, radix: 16))")
+
+            if messageID == IAP2MessageID.requestAuthenticationCert,
+               let message = IAP2Authentication.certificateMessage() {
+                send(IAP2Packet(control: 0x02, session: packet.session,
+                                sequence: packet.sequence,
+                                acknowledgement: packet.acknowledgement,
+                                payload: message.encoded()), peripheral: peripheral)
+                onLog?("[BLE] → 已回送 MFi 证书链")
+            } else if messageID == IAP2MessageID.requestAuthenticationSignature {
+                let challenge = packet.payload.count > 4 ? Data(packet.payload[(start + 4)...]) : Data()
+                if let message = IAP2Authentication.responseMessage(challenge: challenge) {
+                    send(IAP2Packet(control: 0x02, session: packet.session,
+                                    sequence: packet.sequence,
+                                    acknowledgement: packet.acknowledgement,
+                                    payload: message.encoded()), peripheral: peripheral)
+                    onLog?("[BLE] → 已回送 MFi 签名")
+                }
+            } else if messageID == IAP2MessageID.startIDPS {
+                let config = IAP2Configuration.message()
+                send(IAP2Packet(control: 0x02, session: packet.session,
+                                sequence: packet.sequence,
+                                acknowledgement: packet.acknowledgement,
+                                payload: config.encoded()), peripheral: peripheral)
+                onLog?("[BLE] → 已回送车机配置 0x1D00")
+            }
+        }
+    }
+
+    private func send(_ packet: IAP2Packet, peripheral: CBPeripheralManager) {
+        let frame = BLEFrame(type: 0x0001, payload: packet.encoded())
+        guard let characteristic else { return }
+        let ok = peripheral.updateValue(frame.encoded(), for: characteristic, onSubscribedCentrals: nil)
+        if !ok {
+            onLog?("[BLE] 通知队列已满，稍后重试")
+        }
     }
 }
 
-/// 一条 L2CAP 链路：把 iAP2 字节流读出来，解析成封包并回话。
+// MARK: - BLE 帧协议
+
+/// 特征值上的帧：`[type: UInt16 LE][length: UInt16 LE][payload]`。
+struct BLEFrame {
+    var type: UInt16
+    var payload: Data
+
+    func encoded() -> Data {
+        var data = Data()
+        var t = type.littleEndian
+        var l = UInt16(payload.count).littleEndian
+        data.append(withUnsafeBytes(of: &t) { Data($0) })
+        data.append(withUnsafeBytes(of: &l) { Data($0) })
+        data.append(payload)
+        return data
+    }
+}
+
+struct BLEFrameParser {
+    private var buffer = Data()
+
+    mutating func append(_ data: Data) -> [BLEFrame] {
+        buffer.append(data)
+        var frames: [BLEFrame] = []
+        while buffer.count >= 4 {
+            let start = buffer.startIndex
+            let type = UInt16(buffer[start]) | (UInt16(buffer[start + 1]) << 8)
+            let length = Int(UInt16(buffer[start + 2]) | (UInt16(buffer[start + 3]) << 8))
+            guard buffer.count >= 4 + length else { break }
+            let payload = Data(buffer[(start + 4)..<(start + 4 + length)])
+            buffer.removeFirst(4 + length)
+            frames.append(BLEFrame(type: type, payload: payload))
+        }
+        return frames
+    }
+
+    mutating func reset() { buffer.removeAll() }
+}
+
+/// 一条 L2CAP 链路（原版同样保留 L2CAP 作为大数据通道）。
 final class L2CAPLink: NSObject, StreamDelegate {
     let channel: CBL2CAPChannel
     var onLog: ((String) -> Void)?
@@ -154,66 +304,13 @@ final class L2CAPLink: NSObject, StreamDelegate {
             guard read > 0 else { return }
             parser.append(Data(buffer[0..<read]))
             while let packet = parser.next() {
-                handle(packet)
+                onLog?("← L2CAP iAP2 control=0x\(String(packet.control, radix: 16)) \(packet.payload.count)B")
             }
         case .endEncountered, .errorOccurred:
             onLog?("L2CAP 流已结束")
             close()
         default:
             break
-        }
-    }
-
-    private func handle(_ packet: IAP2Packet) {
-        onLog?("← L2CAP iAP2 control=0x\(String(packet.control, radix: 16)) session=\(packet.session) \(packet.payload.count)B")
-
-        // 链路包（控制位 bit1 = 0）回 presence，保持链路存活。
-        if packet.control & 0x02 == 0 {
-            var reply = IAP2Packet.presence
-            reply.session = packet.session
-            send(reply)
-            return
-        }
-
-        // 消息包：认出 iAP2 认证流程就用 MFi 身份回话。
-        guard packet.payload.count >= 2 else { return }
-        let start = packet.payload.startIndex
-        let messageID = (UInt16(packet.payload[start]) << 8) | UInt16(packet.payload[start + 1])
-        onLog?("iAP2 消息 0x\(String(messageID, radix: 16))")
-
-        if messageID == IAP2MessageID.requestAuthenticationCert,
-           let message = IAP2Authentication.certificateMessage() {
-            send(IAP2Packet(control: 0x02, session: packet.session,
-                            sequence: packet.sequence,
-                            acknowledgement: packet.acknowledgement,
-                            payload: message.encoded()))
-            onLog?("→ 已回送 MFi 证书链")
-        } else if messageID == IAP2MessageID.requestAuthenticationSignature {
-            let challenge = packet.payload.count > 4 ? Data(packet.payload[(start + 4)...]) : Data()
-            if let message = IAP2Authentication.responseMessage(challenge: challenge) {
-                send(IAP2Packet(control: 0x02, session: packet.session,
-                                sequence: packet.sequence,
-                                acknowledgement: packet.acknowledgement,
-                                payload: message.encoded()))
-                onLog?("→ 已回送 MFi 签名")
-            }
-        } else if messageID == IAP2MessageID.startIDPS {
-            // 识别流程：回一条包含车机能力的 0x1D00，声明我们支持 CarPlay。
-            let config = IAP2Configuration.message()
-            send(IAP2Packet(control: 0x02, session: packet.session,
-                            sequence: packet.sequence,
-                            acknowledgement: packet.acknowledgement,
-                            payload: config.encoded()))
-            onLog?("→ 已回送车机配置 0x1D00")
-        }
-    }
-
-    private func send(_ packet: IAP2Packet) {
-        guard let output = channel.outputStream else { return }
-        let data = packet.encoded()
-        data.withUnsafeBytes { raw in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return }
-            _ = output.write(base, maxLength: data.count)
         }
     }
 }
