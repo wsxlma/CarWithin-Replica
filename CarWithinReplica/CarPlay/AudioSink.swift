@@ -184,6 +184,14 @@ final class AudioSink {
     }
 }
 
+/// AudioConverter 输入回调签名（Swift 侧未暴露该别名，此处自定义同构类型）。
+private typealias ConverterInputCallback = @convention(c) (
+    AudioConverterRef,
+    UnsafeMutablePointer<UInt32>,
+    UnsafeMutablePointer<AudioBufferList>,
+    UnsafeMutablePointer<AudioStreamPacketDescription>?,
+    UnsafeMutableRawPointer?) -> OSStatus
+
 /// AudioConverter 输入回调上下文。
 private final class InputState {
     let data: Data
@@ -199,7 +207,7 @@ private final class InputState {
     }
 }
 
-private let audioConverterInput: AudioConverterComplexInputData = {
+private let audioConverterInput: ConverterInputCallback = {
     _, packets, bufferList, description, userData in
     guard let userData else { return -1 }
     let state = Unmanaged<InputState>.fromOpaque(userData).takeUnretainedValue()
