@@ -731,7 +731,9 @@ final class CarPlaySession {
         }
         connection.start(queue: queue)
         onLog?("对端接入：\(String(describing: connection.endpoint))")
-        send(.presence, on: connection)
+        // 原版 presence 是固定 6 字节 Link Sync（FF 55 02 00 EE 10），原样发送。
+        connection.send(content: IAP2Packet.presence,
+                        completion: .contentProcessed { _ in })
         receive(on: connection)
     }
 

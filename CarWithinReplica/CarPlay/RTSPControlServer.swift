@@ -24,6 +24,7 @@ final class RTSPControlServer {
 
     func start(port: UInt16 = 7000) throws {
         stop()
+        PairingState.shared.onLog = { [weak self] message in self?.onLog?("[配对] " + message) }
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
         let created = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port) ?? 7000)
@@ -126,13 +127,17 @@ final class RTSPControlServer {
         switch request.path {
         case "/pair-setup":
             payload = PairingState.shared.pairSetup(request.body)
-            onLog?("Pair-Setup 状态 \(PairingState.shared.setupState)")
+            // AirPlay 规定配对接口必须回 application/pairing+tlv8，
+            // 用 octet-stream 的话 iOS 会直接放弃握手。
+            contentType = "application/pairing+tlv8"
+            onLog?("Pair-Setup 状态 \(PairingState.shared.setupState)（回 \(payload.count)B TLV8）")
         case "/pair-verify":
             payload = PairingState.shared.pairVerify(request.body)
-            onLog?("Pair-Verify 完成，加密控制已启用")
+            contentType = "application/pairing+tlv8"
+            onLog?("Pair-Verify 状态 \(PairingState.shared.setupState)（回 \(payload.count)B TLV8，已验证=\(PairingState.shared.verifiedController)）")
         case "/auth-setup":
             payload = PairingState.shared.authSetup(request.body)
-            onLog?("已生成 MFiSAP 响应（身份：\(MFIIdentity.shared.isReady ? "就绪" : "缺失")）")
+            onLog?("已生成 MFiSAP 响应 \(payload.count)B（身份：\(MFIIdentity.shared.isReady ? "就绪" : "缺失")）")
             onLog?(IAP2Configuration.summary())
         case "/info":
             payload = infoPayload()

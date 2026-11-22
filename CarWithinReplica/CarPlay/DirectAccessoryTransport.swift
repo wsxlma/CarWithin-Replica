@@ -110,7 +110,7 @@ final class DirectAccessoryTransport: NSObject {
                                                           transportType: transportType,
                                                           protocolType: 4,
                                                           identifier: nil,
-                                                          dataOutHandler: handler,
+                                                          dataOutHandler: handler as AnyObject,
                                                           connectionUUID: connectionUUID,
                                                           publishConnection: true) else {
             onLog?("[直连] CoreAccessories 拒绝发布 iAP2 端点（type=\(transportType) protocol=4 publish=YES）")
