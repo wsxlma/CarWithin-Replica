@@ -184,6 +184,61 @@ enum ACCBridge {
         return steps
     }
 
+    /// 验证 B：给 dataOutHandler 传真实 block，再试建 endpoint。
+    /// 这一步可能因 block 签名不符而崩溃，所以单独成一个开关。
+    static func createEndpointWithBlock() -> [String] {
+        var steps: [String] = []
+        guard let handle = dlopen(frameworkPath, RTLD_NOW),
+              let cls = NSClassFromString("ACCTransportClient"),
+              let meta = object_getClass(cls) else {
+            return ["CoreAccessories 不可用"]
+        }
+        defer { dlclose(handle) }
+
+        let sharedSelector = NSSelectorFromString("sharedClient")
+        guard let sharedIMP = class_getMethodImplementation(meta, sharedSelector) else {
+            return ["没有 +sharedClient"]
+        }
+        typealias SharedFn = @convention(c) (AnyObject, Selector) -> AnyObject?
+        guard let client = unsafeBitCast(sharedIMP, to: SharedFn.self)(cls as AnyObject, sharedSelector) else {
+            return ["sharedClient 返回 nil"]
+        }
+
+        let connectionSelector = NSSelectorFromString("createConnectionWithType:andIdentifier:")
+        guard let connectionIMP = class_getMethodImplementation(cls, connectionSelector) else {
+            return steps + ["没有 createConnection"]
+        }
+        typealias ConnectionFn = @convention(c) (AnyObject, Selector, Int32, NSString) -> AnyObject?
+        guard let created = unsafeBitCast(connectionIMP, to: ConnectionFn.self)(
+            client, connectionSelector, 0, "CarWithin" as NSString),
+              let uuid = created as? NSUUID else {
+            return steps + ["createConnection 没拿到 UUID"]
+        }
+        steps.append("connection → \(uuid)")
+
+        // 真实 block：收到 endpoint 数据时写日志
+        let handler: @convention(block) (AnyObject?) -> Void = { payload in
+            let count = (payload as? NSData)?.length ?? 0
+            DiagnosticsLog.shared.append("[ACC] endpoint 收到 \(count)B")
+        }
+
+        let endpointSelector = NSSelectorFromString(endpointSelector)
+        guard let endpointIMP = class_getMethodImplementation(cls, endpointSelector) else {
+            return steps + ["没有 createEndpoint"]
+        }
+        typealias EndpointFn = @convention(c) (AnyObject, Selector, Int32, Int32,
+                                               NSString, AnyObject?, NSUUID, Bool) -> AnyObject?
+        let endpointFn = unsafeBitCast(endpointIMP, to: EndpointFn.self)
+
+        for transport in Int32(1)...Int32(3) {
+            let result = endpointFn(client, endpointSelector, transport, 4,
+                                    "CarWithin" as NSString, handler as AnyObject, uuid, true)
+            steps.append("createEndpoint(transport=\(transport), 带 block) → \(result.map { String(describing: $0) } ?? "nil")")
+            if result != nil { break }
+        }
+        return steps
+    }
+
     /// 从 embedded.mobileprovision 读取 entitlements 键名。
     static func entitlementsSummary() -> String {
         guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
@@ -408,6 +463,9 @@ final class CarPlaySession {
 
         let steps = ACCBridge.connect()
         steps.forEach { onLog?("[ACC] " + $0) }
+
+        // 验证 B：带真实 block 再试一次
+        ACCBridge.createEndpointWithBlock().forEach { onLog?("[B] " + $0) }
 
         // ACC 需要 accessories 权限，自签包拿不到；原版走的是 DirectAccessoryTransport。
         let direct = DirectTransport.shared
