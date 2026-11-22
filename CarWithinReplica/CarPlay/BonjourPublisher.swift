@@ -24,7 +24,9 @@ final class BonjourPublisher: NSObject, NetServiceDelegate {
         let serviceName = name ?? CarPlayConfiguration.vehicleName
         let txt = CarPlayConfiguration.txtRecord(pairingKey: pairingKey.publicKey.rawRepresentation)
 
-        for type in ["_airplay._tcp.", "_tds-carkit._tcp."] {
+        // 三个类型都要广播：原版 Info.plist 的 NSBonjourServices 声明了它们，
+        // 漏发任何一个都可能让 iOS 不弹出车机/配件。
+        for type in ["_airplay._tcp.", "_tds-carkit._tcp.", "_carplay-ctrl._tcp."] {
             let service = NetService(domain: "local.", type: type, name: serviceName, port: port)
             service.setTXTRecord(NetService.data(fromTXTRecord: txt))
             service.delegate = self
@@ -53,6 +55,13 @@ final class BonjourPublisher: NSObject, NetServiceDelegate {
     }
 
     func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
-        onLog?("Bonjour 注册失败：\(errorDict)")
+        let code = errorDict["NSNetServicesErrorCode"]?.intValue ?? 0
+        var message = "Bonjour 注册失败：\(sender.type) \(errorDict)"
+        if code == -72008 {
+            message += "\n这是本地网络权限被拒绝：请到 设置 → 隐私与安全性 → 本地网络，打开 CarWithin 的开关"
+        } else if code == -72001 {
+            message += "\n服务名冲突，稍后重试"
+        }
+        onLog?(message)
     }
 }
