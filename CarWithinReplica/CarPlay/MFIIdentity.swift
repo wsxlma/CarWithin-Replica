@@ -48,55 +48,37 @@ final class MFIIdentity {
             return steps + ["private.x963 读取失败"]
         }
 
-        // 私钥可能是裸标量、x963、base64 文本或 DER，逐个尝试。
+        // 私钥候选：依次尝试，用叶子证书的公钥验证，匹配的才算数。
         let normalized = Self.normalize(keyData)
-        steps.append("私钥原始 \(keyData.count)B，归一化 \(normalized.count)B")
+        var candidates: [Data] = []
+        if normalized.count == 32 { candidates.append(normalized) }
+        if normalized.count > 32 { candidates.append(normalized.suffix(32)) }
+        if normalized.first == 0x04, normalized.count > 33 {
+            candidates.append(normalized.dropFirst().prefix(32))
+        }
+        steps.append("私钥 \(keyData.count)B → 归一化 \(normalized.count)B，候选 \(candidates.count) 个")
 
-        var scalar: Data?
-        if normalized.count == 32 {
-            scalar = normalized
-        } else if normalized.count == 65, normalized.first == 0x04 {
-            scalar = normalized.dropFirst()
-        } else {
-            // 交给 Security 解析 DER/PKCS#8
-            let attributes: [String: Any] = [
-                kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-                kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
-                kSecAttrKeySizeInBits as String: 256,
-            ]
-            var error: Unmanaged<CFError>?
-            if let secKey = SecKeyCreateWithData(normalized as CFData, attributes as CFDictionary, &error),
-               let raw = SecKeyCopyExternalRepresentation(secKey, &error) as Data? {
-                if raw.count == 32 {
-                    scalar = raw
-                } else if raw.count == 65, raw.first == 0x04 {
-                    scalar = raw.dropFirst()
-                }
-            } else if let error = error?.takeRetainedValue() {
-                steps.append("Security 解析失败：\(error.localizedDescription)")
+        var leafPublic: Data?
+        if let leafKey = SecCertificateCopyKey(certificate) {
+            leafPublic = SecKeyCopyExternalRepresentation(leafKey, nil) as Data?
+        }
+
+        var matched: P256.Signing.PrivateKey?
+        for candidate in candidates {
+            guard let key = try? P256.Signing.PrivateKey(rawRepresentation: candidate) else { continue }
+            if let leafPublic, key.publicKey.x963Representation == leafPublic {
+                matched = key
+                steps.append("私钥与证书匹配（候选 \(candidate.count)B）")
+                break
             }
         }
 
-        guard let scalar, scalar.count == 32,
-              let key = try? P256.Signing.PrivateKey(rawRepresentation: scalar) else {
-            return steps + ["私钥格式仍不支持（首位 \(Self.hexPrefix(normalized))）"]
+        guard let key = matched else {
+            return steps + ["所有候选都不匹配（首位 \(Self.hexPrefix(normalized))）"]
         }
         privateKey = key
-        steps.append("私钥：P-256 已载入")
 
-        // 私钥与叶子证书是否匹配：比对公钥的 X9.63 表示
-        if let leafKey = SecCertificateCopyKey(certificate),
-           let leafPublic = SecKeyCopyExternalRepresentation(leafKey, nil) as Data? {
-            let ours = key.publicKey.x963Representation
-            if leafPublic == ours {
-                steps.append("私钥与证书匹配")
-                isReady = true
-            } else {
-                steps.append("私钥与证书不匹配（leaf \(leafPublic.count)B / ours \(ours.count)B）")
-            }
-        } else {
-            steps.append("无法读取证书公钥")
-        }
+        isReady = true
 
         return steps
     }

@@ -445,7 +445,9 @@ final class CarPlaySession {
             return
         }
         onLog?("CoreAccessories：\(ACCBridge.isAvailable ? "可用" : "不可用（仍尝试自建通道）")")
-        if SettingsStore.logLevel == "详细" {
+        if SettingsStore.logLevel == "详细",
+           !UserDefaults.standard.bool(forKey: "acc.dump.shown") {
+            UserDefaults.standard.set(true, forKey: "acc.dump.shown")
             onLog?(ACCBridge.endpointSignature())
             onLog?("ACCTransportClient 方法列表：\n" + ACCBridge.selectorDump())
         }

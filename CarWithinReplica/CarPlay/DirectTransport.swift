@@ -95,11 +95,12 @@ final class DirectTransport {
         for index in 0..<dyldImageCount() {
             guard let name = dyldImageName(index) else { continue }
             let path = String(cString: name)
-            if true {
+            if path.contains("Accessory") || path.contains("CarPlay")
+                || path.contains("CarKit") || path.contains("IAP") {
                 lines.append("  " + path)
             }
         }
-        return lines.joined(separator: "\n")
+        return lines.prefix(10).joined(separator: "\n")
     }
 
     // MARK: - 私有
