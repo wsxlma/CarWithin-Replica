@@ -1,5 +1,11 @@
 import Foundation
 import Darwin
+
+@_silgen_name("_dyld_image_count")
+private func dyldImageCount() -> UInt32
+
+@_silgen_name("_dyld_get_image_name")
+private func dyldImageName(_ index: UInt32) -> UnsafePointer<CChar>?
 import ObjectiveC
 
 /// 原版真正使用的直连通道。
@@ -81,8 +87,8 @@ final class DirectTransport {
     /// 列出已加载镜像中名字带 Accessory / Car 的，便于下一次定位。
     private static func imageReport() -> String {
         var lines: [String] = ["已加载镜像（Accessory / Car）："]
-        for index in 0..<_dyld_image_count() {
-            guard let name = _dyld_get_image_name(index) else { continue }
+        for index in 0..<dyldImageCount() {
+            guard let name = dyldImageName(index) else { continue }
             let path = String(cString: name)
             if path.contains("Accessory") || path.contains("Car") {
                 lines.append("  " + path)
