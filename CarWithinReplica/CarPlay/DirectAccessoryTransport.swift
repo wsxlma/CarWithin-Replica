@@ -74,6 +74,16 @@ final class DirectAccessoryTransport: NSObject {
         }
         endpointUUID = endpoint
         onLog?("[直连] createEndpoint 成功 → \(endpoint)")
+
+        // 另注册一次数据回调（ACC 的字典属性），双保险。
+        let handler: @convention(block) (AnyObject, AnyObject) -> Void = { [weak self] a, b in
+            if let d = a as? Data { self?.receive(d) }
+            else if let d = b as? Data { self?.receive(d) }
+            else if let d = a as? NSData { self?.receive(Data(referencing: d)) }
+            else if let d = b as? NSData { self?.receive(Data(referencing: d)) }
+        }
+        _ = ACCBridge.setEndpointDataOutHandlers([endpoint: handler])
+        onLog?("[直连] 已注册 setEndpointDataOutHandlers")
         onLog?("[直连] 参数组合：transport=\(transportType) protocol=0 publish=false identifier=\(identifier)")
 
         // 3) 发布连接（原版这里也返回 false，但端点已建起来，不阻塞）
@@ -89,11 +99,23 @@ final class DirectAccessoryTransport: NSObject {
         return true
     }
 
-    /// iAP2 在线探测：一条 presence 链路包，提示 iOS 服务我们在了。
+    /// iAP2 在线探测：连发几种链路层 control（0x00/0x04/0x08/0xFF），
+    /// 总有一个是 iOS 服务认的 Link Sync。
     private func sendProbe() {
-        let probe = IAP2Packet.presence
-        send(probe.encoded())
-        onLog?("[直连] → 已发送 iAP2 在线探测，等待 iOS 服务回应")
+        for control: UInt8 in [0x00, 0x04, 0x08, 0xFF] {
+            let packet = IAP2Packet(control: control, session: 0, sequence: 0, acknowledgement: 0)
+            sendBoth(packet.encoded())
+            onLog?("[直连] → 在线探测 control=0x\(String(control, radix: 16))")
+        }
+    }
+
+    /// 两个方向都发一次，看哪个被系统认。
+    private func sendBoth(_ data: Data) {
+        guard let endpointUUID else { return }
+        let okIn = ACCBridge.processIncomingData(data, endpointUUID: endpointUUID)
+        _ = ACCBridge.sendOutgoingData(data, endpointUUID: endpointUUID,
+                                       connectionUUID: connectionUUID ?? "")
+        onLog?("[直连] 发送 \(data.count)B：processIncoming=\(okIn)")
     }
 
     /// 收到系统送来的字节流：切出 iAP2 封包，按认证流程回话。
@@ -176,19 +198,7 @@ final class DirectAccessoryTransport: NSObject {
     }
 
     private func send(_ data: Data) {
-        // 配件 → 系统：processIncomingData 才是正确方向
-        //（sendOutgoingData 是系统 → 配件，之前用反了，系统收不到）。
-        guard let endpointUUID else {
-            onLog?("[直连] 无端点，无法发送")
-            return
-        }
-        let okIn = ACCBridge.processIncomingData(data, endpointUUID: endpointUUID)
-        _ = sendData(data)   // 顺带再走一次反向，便于日志对比哪个有效
-        if okIn {
-            onLog?("[直连] → processIncomingData 已发送 \(data.count)B")
-        } else {
-            onLog?("[直连] → processIncomingData 失败，改走 sendOutgoingData \(data.count)B")
-        }
+        sendBoth(data)
     }
 
     func stop() {
