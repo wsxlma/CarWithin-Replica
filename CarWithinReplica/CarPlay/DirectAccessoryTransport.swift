@@ -78,12 +78,12 @@ final class DirectAccessoryTransport: NSObject {
         // 另注册一次数据回调（ACC 的字典属性），双保险。
         let handler: @convention(block) (AnyObject, AnyObject) -> Void = { [weak self] a, b in
             // 诊断：block 一被调用就打日志，区分「系统没发」和「签名收不到」
-            self?.onLog?("[直连] dataOutHandler 被调用 a=\\(type(of: a)) b=\\(type(of: b))")
+            self?.onLog?("[直连] dataOutHandler a=\(String(describing: a)) b=\(String(describing: b))")
             if let d = a as? Data { self?.receive(d) }
             else if let d = b as? Data { self?.receive(d) }
             else if let d = a as? NSData { self?.receive(Data(referencing: d)) }
             else if let d = b as? NSData { self?.receive(Data(referencing: d)) }
-            else { self?.onLog?("[直连] dataOutHandler 参数无法识别为 Data") }
+            else { self?.onLog?("[直连] dataOutHandler 参数不是 Data") }
         }
         _ = ACCBridge.setEndpointDataOutHandlers([endpoint: handler])
         onLog?("[直连] 已注册 setEndpointDataOutHandlers")
