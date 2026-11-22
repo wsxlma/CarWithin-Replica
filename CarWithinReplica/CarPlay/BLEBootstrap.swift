@@ -43,7 +43,6 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
         }
         manager?.stopAdvertising()
         if let psmID { manager?.unpublishL2CAPChannel(psmID) }
-        manager?.stop()
         manager = nil
         self.psmID = nil
         links.forEach { $0.close() }
@@ -69,7 +68,7 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
         }
         guard peripheral.state == .poweredOn else { return }
         // L2CAP 是 iAP2 over BLE 的传输层，先发布通道再广播（原版顺序）。
-        peripheral.publishL2CAPChannel()
+        peripheral.publishL2CAPChannel(withEncryption: false)
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
@@ -107,7 +106,7 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         guard let channel else { return }
-        onLog?("[BLE] L2CAP 已连入 PSM=\(channel.channelPSM)")
+        onLog?("[BLE] L2CAP 已连入（PSM=\(self.psmID.map(String.init) ?? "?")）")
         let link = L2CAPLink(channel: channel)
         link.onLog = { [weak self] in self?.onLog?($0) }
         links.append(link)
@@ -149,8 +148,9 @@ final class L2CAPLink: NSObject, StreamDelegate {
         guard aStream === channel.inputStream else { return }
         switch eventCode {
         case .hasBytesAvailable:
+            guard let input = aStream as? InputStream else { return }
             var buffer = [UInt8](repeating: 0, count: 4096)
-            let read = aStream.read(&buffer, maxLength: buffer.count)
+            let read = input.read(&buffer, maxLength: buffer.count)
             guard read > 0 else { return }
             parser.append(Data(buffer[0..<read]))
             while let packet = parser.next() {
