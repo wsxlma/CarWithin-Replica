@@ -78,7 +78,10 @@ struct IAP2Packet: Equatable {
             acknowledgement: data[start + 7],
             payload: payload)
     }
+}
 
+/// 从字节流里切出完整 iAP2 封包：先对齐 sync，再按 length 取整包（含 checksum）。
+struct IAP2Parser {
     private var buffer = Data()
     private(set) var droppedBytes = 0
 
