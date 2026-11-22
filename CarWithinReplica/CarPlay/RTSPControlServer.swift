@@ -199,11 +199,11 @@ final class RTSPControlServer {
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
         for port in pair {
-            guard let listener = try? NWListener(using: parameters,
-                                                on: NWEndpoint.Port(rawValue: port) ?? port) else {
+            guard let portNumber = NWEndpoint.Port(rawValue: port),
+                  let listener = try? NWListener(using: parameters, on: portNumber) else {
                 continue
             }
-            listener.newConnectionHandler = { [weak self] connection in
+            listener.newConnectionHandler = { [weak self] (connection: NWConnection) in
                 connection.start(queue: self?.queue ?? .main)
                 self?.onLog?("媒体连接已建立（端口 \(port)）")
                 self?.readMedia(connection)
@@ -216,7 +216,7 @@ final class RTSPControlServer {
         let header = isTCP
             ? "RTP/AVP/TCP;unicast;interleaved=0-1;server_port=\(base)"
             : "RTP/AVP/UDP;unicast;server_port=\(base)-\(base + 1)"
-        return MediaTransport(header: header, port: base, kind: kind)
+        return MediaTransport(header: header, port: Int(base), kind: kind)
     }
 
     private func readMedia(_ connection: NWConnection) {
