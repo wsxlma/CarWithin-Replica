@@ -34,6 +34,7 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
     private var subscribed: [CBCentral] = []
     private var links: [L2CAPLink] = []
     private var frameParser = BLEFrameParser()
+    private var advertised = false
 
     private override init() { super.init() }
 
@@ -58,6 +59,7 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
         manager = nil
         self.psmID = nil
         characteristic = nil
+        advertised = false
         subscribed.removeAll()
         links.forEach { $0.close() }
         links.removeAll()
@@ -109,6 +111,9 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             onLog?("[BLE] GATT 服务添加失败：\(error.localizedDescription)")
             return
         }
+        // 每个 service 都会回调一次 didAdd，只在第一次启动广播。
+        guard !advertised else { return }
+        advertised = true
         onLog?("[BLE] GATT 服务已添加，开始广播")
         // AD 包必须带 CarPlay TLV 载荷（配对 flag / 能力掩码），
         // 否则 iPhone 只看到一个普通外设，不认它是 CarPlay（真机抓包结论）。

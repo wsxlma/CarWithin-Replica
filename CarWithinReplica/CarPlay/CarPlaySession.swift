@@ -364,6 +364,16 @@ enum ACCBridge {
         return unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString)
     }
 
+    /// 数据方向：配件 → 系统。主动发 iAP2 消息给 iOS 用这个。
+    static func processIncomingData(_ data: Data, endpointUUID: String) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("processIncomingData:forEndpointWithUUID:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, NSData, NSString) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, sel, data as NSData, endpointUUID as NSString)
+    }
+
+    /// 数据方向：系统 → 配件（原版 onData 收的是这条）。
     static func sendOutgoingData(_ data: Data, endpointUUID: String, connectionUUID: String) -> Bool {
         guard let cls = accClass(), let client = sharedTransportClient() else { return false }
         let sel = NSSelectorFromString("sendOutgoingData:forEndpointWithUUID:connectionUUID:withReply:")
