@@ -72,6 +72,9 @@ enum IAP2MessageID {
     static let requestAuthenticationCert: UInt16 = 0xAA01
     static let requestAuthenticationSignature: UInt16 = 0xAA02
     static let authStatus: UInt16 = 0xAA03
+    static let requestIdentification: UInt16 = 0x0001
+    static let identificationInformation: UInt16 = 0x0002
+    static let identificationAccepted: UInt16 = 0x0003
     static let startIDPS: UInt16 = 0xEA00
     static let setFIDToken: UInt16 = 0xEA01
     static let startSession: UInt16 = 0xE000

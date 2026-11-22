@@ -128,7 +128,14 @@ final class DirectAccessoryTransport: NSObject {
             let messageID = (UInt16(packet.payload[start]) << 8) | UInt16(packet.payload[start + 1])
             onLog?("[直连] iAP2 消息 0x\(String(messageID, radix: 16))")
 
-            if messageID == IAP2MessageID.startIDPS {
+            if messageID == IAP2MessageID.requestIdentification {
+                // iAP2 标准流程：主机发 RequestIdentification(0x0001)，配件回 0x0002。
+                let ident = AccessoryMessages.identification(
+                    name: CarPlayConfiguration.vehicleName,
+                    deviceID: AccessoryMessages.deviceID)
+                send(encode(ident, packet: packet))
+                onLog?("[直连] → 回送 IdentificationInformation(0x0002)")
+            } else if messageID == IAP2MessageID.startIDPS {
                 let ident = AccessoryMessages.identification(
                     name: CarPlayConfiguration.vehicleName,
                     deviceID: AccessoryMessages.deviceID)

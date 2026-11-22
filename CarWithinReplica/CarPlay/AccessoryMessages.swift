@@ -24,9 +24,9 @@ enum AccessoryMessages {
 
     private static func text(_ value: String) -> Data { Data(value.utf8) }
 
-    /// 0xEA02 accessoryInfo：向 iPhone 声明配件身份（名称 + deviceID）。
+    /// 0x0002 IdentificationInformation：iAP2 标准识别响应（名称 + deviceID）。
     static func identification(name: String, deviceID: String) -> IAP2Message {
-        IAP2Message(id: IAP2MessageID.accessoryInfo, parameters: [
+        IAP2Message(id: IAP2MessageID.identificationInformation, parameters: [
             .init(id: 0x00, value: text(name)),
             .init(id: 0x01, value: text(deviceID)),
         ])
