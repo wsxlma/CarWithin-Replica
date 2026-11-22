@@ -184,30 +184,27 @@ final class AudioSink {
     }
 }
 
-/// AudioConverter 输入回调签名（Swift 侧未暴露该别名，此处自定义同构类型）。
-private typealias ConverterInputCallback = @convention(c) (
-    AudioConverterRef,
-    UnsafeMutablePointer<UInt32>,
-    UnsafeMutablePointer<AudioBufferList>,
-    UnsafeMutablePointer<AudioStreamPacketDescription>?,
-    UnsafeMutableRawPointer?) -> OSStatus
-
 /// AudioConverter 输入回调上下文。
 private final class InputState {
     let data: Data
     var sent = false
-    var packetDescription: AudioStreamPacketDescription
+    let packetDescriptionPointer: UnsafeMutablePointer<AudioStreamPacketDescription>
 
     init(data: Data) {
         self.data = data
-        self.packetDescription = AudioStreamPacketDescription(
+        packetDescriptionPointer = .allocate(capacity: 1)
+        packetDescriptionPointer.initialize(to: AudioStreamPacketDescription(
             mStartOffset: 0,
             mVariableFramesInPacket: 0,
-            mDataByteSize: UInt32(data.count))
+            mDataByteSize: UInt32(data.count)))
+    }
+
+    deinit {
+        packetDescriptionPointer.deallocate()
     }
 }
 
-private let audioConverterInput: ConverterInputCallback = {
+private let audioConverterInput: AudioConverterComplexInputDataProc = {
     _, packets, bufferList, description, userData in
     guard let userData else { return -1 }
     let state = Unmanaged<InputState>.fromOpaque(userData).takeUnretainedValue()
@@ -222,7 +219,7 @@ private let audioConverterInput: ConverterInputCallback = {
         bufferList.pointee.mBuffers.mData = UnsafeMutableRawPointer(mutating: raw.baseAddress!)
     }
     packets.pointee = 1
-    description?.pointee = state.packetDescription
+    description?.pointee = state.packetDescriptionPointer
     state.sent = true
     return noErr
 }
