@@ -76,14 +76,15 @@ final class DirectAccessoryTransport: NSObject {
         onLog?("[直连] createEndpoint 成功 → \(endpoint)")
 
         // 另注册一次数据回调（ACC 的字典属性），双保险。
-        let handler: @convention(block) (AnyObject, AnyObject) -> Void = { [weak self] a, b in
-            // 诊断：block 一被调用就打日志，区分「系统没发」和「签名收不到」
-            self?.onLog?("[直连] dataOutHandler a=\(String(describing: a)) b=\(String(describing: b))")
-            if let d = a as? Data { self?.receive(d) }
+        // dataOutHandler 真实签名是三参数：(connectionUUID, endpointUUID, data)。
+        // 之前声明双参数，第三参数（数据）被直接丢弃——所以一直"收不到"。
+        let handler: @convention(block) (AnyObject, AnyObject, AnyObject) -> Void = { [weak self] a, b, c in
+            self?.onLog?("[直连] dataOutHandler c=\(String(describing: c))")
+            if let d = c as? Data { self?.receive(d) }
+            else if let d = c as? NSData { self?.receive(Data(referencing: d)) }
+            else if let d = a as? Data { self?.receive(d) }
             else if let d = b as? Data { self?.receive(d) }
-            else if let d = a as? NSData { self?.receive(Data(referencing: d)) }
-            else if let d = b as? NSData { self?.receive(Data(referencing: d)) }
-            else { self?.onLog?("[直连] dataOutHandler 参数不是 Data") }
+            else { self?.onLog?("[直连] dataOutHandler 第三参数不是 Data") }
         }
         _ = ACCBridge.setEndpointDataOutHandlers([endpoint: handler])
         onLog?("[直连] 已注册 setEndpointDataOutHandlers")
