@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// iAP2 消息层：消息 id + 一组 TLV 参数。
 /// 格式：`messageID(2) | [paramID(2) | length(2) | value]*`
@@ -117,5 +118,45 @@ enum TLV8 {
             index = start + length
         }
         return items
+    }
+}
+
+
+/// 用已载入的 MFi 身份生成 iAP2 认证阶段消息。
+/// 消息 ID 对照原版日志：0xAA00..0xAA05 为配件认证流程。
+enum IAP2Authentication {
+    static let certificateParameter: UInt16 = 0x00
+    static let challengeParameter: UInt16 = 0x01
+    static let signatureParameter: UInt16 = 0x02
+
+    /// 0xAA01：把证书链交给 iPhone。
+    static func certificateMessage() -> IAP2Message? {
+        guard let chain = MFIIdentity.shared.chainData else { return nil }
+        return IAP2Message(
+            id: IAP2MessageID.requestAuthenticationCert,
+            parameters: [IAP2Parameter(id: certificateParameter, value: chain)])
+    }
+
+    /// 0xAA03：对 iPhone 发来的挑战值签名。
+    static func responseMessage(challenge: Data) -> IAP2Message? {
+        guard let signature = MFIIdentity.shared.sign(challenge) else { return nil }
+        return IAP2Message(
+            id: IAP2MessageID.authStatus,
+            parameters: [IAP2Parameter(id: signatureParameter, value: signature)])
+    }
+
+    /// 离线自检：签名后用同一把公钥验签，确认私钥确实可用于 MFiSAP。
+    static func selfTest() -> String {
+        guard MFIIdentity.shared.isReady,
+              let key = MFIIdentity.shared.privateKey else {
+            return "身份未就绪，跳过"
+        }
+        let challenge = Data("CarWithin-iAP2-selftest".utf8)
+        guard let signature = MFIIdentity.shared.sign(challenge),
+              let ecdsa = try? P256.Signing.ECDSASignature(derRepresentation: signature) else {
+            return "签名生成失败"
+        }
+        let valid = key.publicKey.isValidSignature(ecdsa, for: challenge)
+        return "签名自检 " + (valid ? "通过" : "失败") + "（DER \(signature.count)B）"
     }
 }

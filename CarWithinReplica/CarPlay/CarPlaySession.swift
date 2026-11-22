@@ -508,6 +508,10 @@ final class CarPlaySession {
 
         MFIIdentity.shared.load().forEach { onLog?("[MFI] " + $0) }
         onLog?("[MFI] 状态：" + (MFIIdentity.shared.isReady ? "就绪" : "未就绪"))
+        onLog?("[iAP2] " + IAP2Authentication.selfTest())
+        if let certificate = IAP2Authentication.certificateMessage() {
+            onLog?("[iAP2] 0xAA01 证书消息已构造（\(certificate.encoded().count)B）")
+        }
 
         let steps = ACCBridge.connect()
         steps.forEach { onLog?("[ACC] " + $0) }
