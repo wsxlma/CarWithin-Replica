@@ -228,10 +228,12 @@ enum CarPlayConfiguration {
 
     // MARK: - 协议侧输出
 
-    /// Bonjour TXT 记录。原版字段 + 车机能力字段，供 iOS 的 CarPlay 栈判断。
+    /// Bonjour TXT 记录：只放 iOS 的 CarPlay/AirPlay 栈认的标准字段
+    /// （对照 WirelessCarPlay 的 TXT 结构：deviceid / features / model / pk / flags）。
+    /// 车机配置走 /info 与 iAP2 0x1D00，不塞进 TXT——mDNS 单包有上限，塞多了会被丢弃。
     static func txtRecord(pairingKey: Data) -> [String: Data] {
         func text(_ value: String) -> Data { Data(value.utf8) }
-        let record: [String: Data] = [
+        return [
             "deviceid": text("AA:BB:CC:DD:EE:FF"),
             "features": text("0x5A7FFFF7,0x1E"),
             "flags": text("0x4"),
@@ -245,18 +247,7 @@ enum CarPlayConfiguration {
             "pi": text(UUID().uuidString),
             "pk": pairingKey,
             "gid": text("CarWithin"),
-            "supportsH265": text(isH265 ? "1" : "0"),
-            "codec": text(isH265 ? "h265" : "h264"),
-            "nightMode": text("\(nightMode)"),
-            "rightHandDrive": text(rightHandDrive ? "1" : "0"),
-            "iconSize": text("\(iconMillimeters)"),
-            "width": text("\(displayWidth)"),
-            "height": text("\(displayHeight)"),
-            "fps": text("\(fps)"),
-            "aspectRatio": text(aspectRatioText),
-            "vehicleButton": text(showVehicleButton ? "1" : "0"),
         ]
-        return record
     }
 
     /// /info 的能力声明 plist。
