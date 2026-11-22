@@ -81,19 +81,21 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
         // 1) 先发布 L2CAP 数据通道
         peripheral.publishL2CAPChannel(withEncryption: false)
 
-        // 2) 再注册 GATT 服务（缺了这步，iPhone 不会认这个外设）
-        let characteristic = CBMutableCharacteristic(
-            type: characteristicUUID,
-            properties: [.read, .write, .writeWithoutResponse, .notify, .indicate],
-            value: nil,
-            permissions: [.readable, .writeable])
-        // CarPlay 发现服务排第一位，iAP2 数据服务跟上。
+        // 2) 再注册 GATT 服务。注意：每个 service 必须有自己的 characteristic 实例，
+        //    复用同一个实例会导致 addService 崩溃（2.3.8 闪退原因）。
+        var dataCharacteristic: CBMutableCharacteristic?
         for uuid in [carPlayUUID, iap2UUID, serviceUUID] {
+            let characteristic = CBMutableCharacteristic(
+                type: characteristicUUID,
+                properties: [.read, .write, .writeWithoutResponse, .notify],
+                value: nil,
+                permissions: [.readable, .writeable])
             let service = CBMutableService(type: uuid, primary: true)
             service.characteristics = [characteristic]
             peripheral.add(service)
+            if dataCharacteristic == nil { dataCharacteristic = characteristic }
         }
-        self.characteristic = characteristic
+        self.characteristic = dataCharacteristic
         onLog?("[BLE] GATT 服务已注册：CarPlay(EC884348) + iAP2(FFCACADE) + 0xFC94")
     }
 

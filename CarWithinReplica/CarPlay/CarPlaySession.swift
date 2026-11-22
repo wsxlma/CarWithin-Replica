@@ -611,6 +611,7 @@ final class CarPlaySession {
         onLog?("[iAP2] " + IAP2Configuration.summary())
 
         // 直连配件端点：照原版 DirectAccessoryTransport（transportType=2）建本机配件端点。
+        DiagnosticsLog.shared.rotateIfNeeded()
         DirectAccessoryTransport.shared.onLog = { [weak self] message in self?.onLog?(message) }
         _ = DirectAccessoryTransport.shared.start(
             identifier: CarPlayConfiguration.vehicleName, transportType: 2)
