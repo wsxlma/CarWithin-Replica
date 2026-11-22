@@ -340,10 +340,17 @@ enum ACCBridge {
 
         typealias Fn = @convention(c) (AnyObject, Selector, Int32, Int32, NSString,
                                        AnyObject, NSString, Bool) -> AnyObject?
-        let handler: @convention(block) (AnyObject) -> Void = { payload in
+        // dataOutHandler 的真实签名是 (endpointUUID, data) 双参数。
+        // 单参数声明会把 UUID 字符串当数据，as? Data 失败后静默丢弃（onData 永远不触发）。
+        let handler: @convention(block) (AnyObject, AnyObject) -> Void = { endpoint, payload in
             if let data = payload as? Data {
                 onData(data)
             } else if let nsdata = payload as? NSData {
+                onData(Data(referencing: nsdata))
+            } else if let data = endpoint as? Data {
+                // 兜底：万一顺序反了
+                onData(data)
+            } else if let nsdata = endpoint as? NSData {
                 onData(Data(referencing: nsdata))
             }
         }
