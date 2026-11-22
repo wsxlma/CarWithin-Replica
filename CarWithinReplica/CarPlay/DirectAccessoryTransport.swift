@@ -89,6 +89,11 @@ final class DirectAccessoryTransport: NSObject {
         onLog?("[直连] 已注册 setEndpointDataOutHandlers")
         onLog?("[直连] 参数组合：transport=\(transportType) protocol=0 publish=false identifier=\(identifier)")
 
+        // 收数据走 ACC delegate 的 receivedSecureTunnelData，不是 dataOutHandler。
+        ACCBridge.delegateRef?.onSecureData = { [weak self] data in
+            self?.receive(data)
+        }
+
         // 3) 发布连接 + 标记认证状态（原版有 authenticated 跟踪，可能这是系统开口的开关）
         let published = ACCBridge.publishConnection(uuid: connectionUUID)
         onLog?("[直连] publishConnection → \(published)")

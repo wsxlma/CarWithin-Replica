@@ -847,6 +847,7 @@ final class CarPlaySession {
 /// ACCTransportClient 的 delegate 实现。只用于接收回调并写日志。
 final class ACCTransportDelegate: NSObject {
     var onEvent: ((String) -> Void)?
+    var onSecureData: ((Data) -> Void)?
 
     @objc func propertiesDidChange(_ properties: NSDictionary?,
                                    forConnectionWithUUID uuid: NSUUID?,
@@ -859,6 +860,20 @@ final class ACCTransportDelegate: NSObject {
                                    previousProperties: NSDictionary?,
                                    connectionUUID: NSUUID?) {
         onEvent?("endpoint 属性变化：\(properties?.description ?? "nil")")
+    }
+
+    /// 系统把数据送进来的真正入口（此前只挂了 dataOutHandler，那是发送确认回调）。
+    @objc func receivedSecureTunnelData(_ data: NSData, forEndpoint endpoint: NSString) {
+        let payload = Data(referencing: data)
+        onEvent?("收到安全隧道数据 \(payload.count)B endpoint=\(endpoint)")
+        onSecureData?(payload)
+    }
+
+    @objc func processOutgoingSecureTunnelData(_ data: NSData,
+                                               forEndpoint endpoint: NSString,
+                                               forType type: UInt8) -> Bool {
+        onEvent?("系统请求输出隧道数据 \(data.length)B type=\(type)")
+        return true
     }
 
     @objc func authStateDidChange(_ state: Int32,
