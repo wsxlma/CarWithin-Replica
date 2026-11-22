@@ -16,6 +16,10 @@ final class RTSPControlServer {
     private var nextPort: UInt16 = 50220
     private let queue = DispatchQueue(label: "carwithin.rtsp")
 
+    /// 供自动重启守护判断服务是否还活着。
+    private(set) var isReady = false
+    private(set) var lastClientAt: Date?
+
     private init() {}
 
     func start(port: UInt16 = 7000) throws {
@@ -27,6 +31,11 @@ final class RTSPControlServer {
         created.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         created.stateUpdateHandler = { [weak self] state in
             self?.onLog?("RTSP 监听状态：\(String(describing: state))")
+            switch state {
+            case .ready: self?.isReady = true
+            case .failed, .cancelled: self?.isReady = false
+            default: break
+            }
         }
         created.start(queue: queue)
         onLog?("原生 RTSP 监听器已就绪，端口 \(port)")
@@ -39,11 +48,14 @@ final class RTSPControlServer {
         mediaListeners.removeAll()
         sessionID = nil
         nextPort = 50220
+        isReady = false
+        lastClientAt = nil
         PairingState.shared.reset()
     }
 
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
+        lastClientAt = Date()
         onLog?("收到控制连接：\(String(describing: connection.endpoint))")
         readRequest(connection, accumulated: Data())
     }
@@ -109,6 +121,7 @@ final class RTSPControlServer {
 
         var payload = Data()
         var extraHeaders: [String] = []
+        var contentType = "application/octet-stream"
 
         switch request.path {
         case "/pair-setup":
@@ -120,8 +133,18 @@ final class RTSPControlServer {
         case "/auth-setup":
             payload = PairingState.shared.authSetup(request.body)
             onLog?("已生成 MFiSAP 响应（身份：\(MFIIdentity.shared.isReady ? "就绪" : "缺失")）")
+            onLog?(IAP2Configuration.summary())
         case "/info":
             payload = infoPayload()
+            contentType = "application/x-apple-binary-plist"
+        case "/config":
+            payload = Data(CarPlayConfiguration.summary().joined(separator: "\n").utf8)
+            contentType = "text/plain; charset=utf-8"
+        case "/stutter":
+            SessionWatchdog.shared.reportStutter()
+            onLog?("收到浏览器卡顿上报")
+        case "/feedback", "/command":
+            onLog?("控制反馈：\(String(decoding: request.body.prefix(160), as: UTF8.self))")
         default:
             break
         }
@@ -139,6 +162,12 @@ final class RTSPControlServer {
                 extraHeaders.append("Transport: \(transport.header)")
                 onLog?("SETUP 已分配媒体端口 \(transport.port)，类型 \(transport.kind)")
             }
+            extraHeaders.append("x-apple-video-codec: \(CarPlayConfiguration.isH265 ? "H.265" : "H.264")")
+            extraHeaders.append("x-apple-display: \(CarPlayConfiguration.displayWidth)x\(CarPlayConfiguration.displayHeight)@\(CarPlayConfiguration.fps)")
+            extraHeaders.append("x-apple-aspect-ratio: \(CarPlayConfiguration.aspectRatioText)")
+            if !isAudio {
+                onLog?("视频参数：\(CarPlayConfiguration.codecName) \(CarPlayConfiguration.displayWidth)×\(CarPlayConfiguration.displayHeight) @ \(CarPlayConfiguration.fps)FPS")
+            }
         case "RECORD":
             extraHeaders.append("Session: \(sessionIdentifier())")
             onLog?("已接受 CarPlay RECORD，开始接收媒体")
@@ -150,7 +179,7 @@ final class RTSPControlServer {
 
         var head = "RTSP/1.0 200 OK\r\nCSeq: \(request.headers["cseq"] ?? "1")\r\n"
         if !payload.isEmpty {
-            head += "Content-Type: application/octet-stream\r\n"
+            head += "Content-Type: \(contentType)\r\n"
         }
         head += "Content-Length: \(payload.count)\r\n"
         for extra in extraHeaders { head += extra + "\r\n" }
@@ -168,20 +197,7 @@ final class RTSPControlServer {
     }
 
     private func infoPayload() -> Data {
-        let xml = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0"><dict>
-        <key>name</key><string>CarWithin</string>
-        <key>deviceID</key><string>AA:BB:CC:DD:EE:FF</string>
-        <key>model</key><string>CarWithin1,1</string>
-        <key>srcVers</key><string>700.1</string>
-        <key>features</key><integer>1517832183</integer>
-        <key>keepAliveLowPower</key><true/>
-        <key>keepAliveSendStatsAsBody</key><true/>
-        </dict></plist>
-        """
-        return Data(xml.utf8)
+        return Data(CarPlayConfiguration.infoPlist().utf8)
     }
 
     private struct MediaTransport {
@@ -228,6 +244,7 @@ final class RTSPControlServer {
             [weak self] content, _, isComplete, error in
             guard let self, error == nil else { connection.cancel(); return }
             if let content, !content.isEmpty {
+                SessionWatchdog.shared.noteActivity()
                 if audio {
                     AudioSink.shared.feed(content)
                 } else {

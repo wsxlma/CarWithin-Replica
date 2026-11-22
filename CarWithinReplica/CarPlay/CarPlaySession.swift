@@ -515,12 +515,20 @@ final class CarPlaySession {
 
         // 自建端点：Bonjour 广播 + RTSP 控制 + 视频通道，等 iOS 的 CarPlay 栈接入。
         // 这条链路不依赖 ACCTransportClient，也不需要配件 entitlement。
+        CarPlayConfiguration.applyAppearance()
+        onLog?("[配置] 车机参数已加载：")
+        CarPlayConfiguration.summary().forEach { onLog?("[配置] " + $0) }
+        onLog?("[iAP2] " + IAP2Configuration.summary())
+
         CarPlayReceiver.shared.onLog = { [weak self] message in self?.onLog?(message) }
         CarPlayReceiver.shared.start()
 
+        SessionWatchdog.shared.onLog = { [weak self] message in self?.onLog?(message) }
+        SessionWatchdog.shared.start()
     }
 
     func stop() {
+        SessionWatchdog.shared.stop()
         CarPlayReceiver.shared.stop()
         DirectTransport.shared.stop()
         controlListener?.cancel(); controlListener = nil

@@ -8,6 +8,8 @@ final class AudioSink {
     static let shared = AudioSink()
 
     var onLog: ((String) -> Void)?
+    /// Wi-Fi 伴音模式：把解码后的 Float32 交错 PCM 交给浏览器端播放。
+    var onPCM: ((Data) -> Void)?
 
     private let queue = DispatchQueue(label: "carwithin.audio")
     private var pending = Data()
@@ -33,6 +35,7 @@ final class AudioSink {
             try engine.start()
             player.play()
             onLog?("音频输出已启动（44100 Hz / 2 声道）")
+            onLog?("声音路由：\(CarPlayConfiguration.audioOverWiFi ? "Wi-Fi 伴音（浏览器）" : "由 iPhone 输出（本机）")")
         } catch {
             onLog?("音频启动失败：\(error.localizedDescription)")
         }
@@ -162,6 +165,10 @@ final class AudioSink {
     }
 
     private func play(buffer: [UInt8], size: Int) {
+        if CarPlayConfiguration.audioOverWiFi {
+            onPCM?(Data(buffer.prefix(size)))
+            return
+        }
         guard started, let format = AVAudioFormat(standardFormatWithSampleRate: destinationFormat.mSampleRate,
                                                   channels: AVAudioChannelCount(destinationFormat.mChannelsPerFrame)) else { return }
         let capacity = AVAudioFrameCount(size / Int(destinationFormat.mBytesPerFrame))

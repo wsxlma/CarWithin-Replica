@@ -3,42 +3,44 @@ import CryptoKit
 
 /// 自建端点第一步：把本机广播成一个 AirPlay / CarWithin 车机，
 /// 让同一台 iPhone 的 CarPlay 栈主动连进来（原版日志证据）。
+///
+/// TXT 记录里的车机能力字段全部来自设置页（车辆名称、外观、驾驶位、
+/// 编码、分辨率、图标大小…），改设置后调用 republish() 立即生效。
 final class BonjourPublisher: NSObject, NetServiceDelegate {
     static let shared = BonjourPublisher()
     var onLog: ((String) -> Void)?
 
     private var services: [NetService] = []
     private let pairingKey = Curve25519.KeyAgreement.PrivateKey()
+    private var currentPort: Int32 = 7000
 
     private override init() { super.init() }
 
     var publicKeyData: Data { pairingKey.publicKey.rawRepresentation }
 
-    func start(name: String = "CarWithin", port: Int32 = 7000) {
+    func start(name: String? = nil, port: Int32 = 7000) {
         stop()
-        let txt: [String: Data] = [
-            "deviceid": Data("AA:BB:CC:DD:EE:FF".utf8),
-            "features": Data("0x5A7FFFF7,0x1E".utf8),
-            "flags": Data("0x4".utf8),
-            "model": Data("CarWithin1,1".utf8),
-            "name": Data(name.utf8),
-            "manufacturer": Data("CarWithin".utf8),
-            "serialNumber": Data("CW0001".utf8),
-            "protovers": Data("1.1".utf8),
-            "srcvers": Data("700.1".utf8),
-            "vv": Data("2".utf8),
-            "pi": Data(UUID().uuidString.utf8),
-            "pk": pairingKey.publicKey.rawRepresentation,
-            "gid": Data("CarWithin".utf8),
-        ]
+        currentPort = port
+        let serviceName = name ?? CarPlayConfiguration.vehicleName
+        let txt = CarPlayConfiguration.txtRecord(pairingKey: pairingKey.publicKey.rawRepresentation)
+
         for type in ["_airplay._tcp.", "_tds-carkit._tcp."] {
-            let service = NetService(domain: "local.", type: type, name: name, port: port)
+            let service = NetService(domain: "local.", type: type, name: serviceName, port: port)
             service.setTXTRecord(NetService.data(fromTXTRecord: txt))
             service.delegate = self
             service.publish()
             services.append(service)
-            onLog?("Bonjour 发布 \(type) → 端口 \(port)")
+            onLog?("Bonjour 发布 \(serviceName).\(type) → 端口 \(port)")
         }
+        onLog?("车辆能力：\(CarPlayConfiguration.codecName) / \(CarPlayConfiguration.displayWidth)×\(CarPlayConfiguration.displayHeight)"
+               + " / 夜间模式 \(CarPlayConfiguration.nightMode) / \(CarPlayConfiguration.rightHandDrive ? "右舵" : "左舵")")
+    }
+
+    /// 设置变更后重新广播（名称、编码、比例等变化时调用）。
+    func republish() {
+        guard !services.isEmpty else { return }
+        onLog?("配置已变更，重新发布 Bonjour 服务")
+        start(port: currentPort)
     }
 
     func stop() {

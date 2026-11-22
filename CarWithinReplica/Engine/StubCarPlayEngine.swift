@@ -34,18 +34,15 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
 
         if mode == "browser" {
             let port = UInt16(SettingsStore.receiverPort) ?? 9888
-            let size: (Int, Int)
-            if SettingsStore.resolution.contains("720") {
-                size = (1280, 720)
-            } else if SettingsStore.resolution.contains("480") {
-                size = (854, 480)
-            } else {
-                size = (1920, 1080)
-            }
             let browser = BrowserOutput(port: port,
-                                        width: size.0,
-                                        height: size.1,
-                                        fps: max(10, SettingsStore.fps))
+                                        width: CarPlayConfiguration.displayWidth,
+                                        height: CarPlayConfiguration.displayHeight,
+                                        fps: max(10, CarPlayConfiguration.fps))
+            // 声音设置为「Wi-Fi 伴音」时，AudioSink 把 PCM 交给浏览器播放。
+            AudioSink.shared.onPCM = { [weak self] pcm in
+                self?.browser?.broadcastAudio(pcm)
+            }
+            DiagnosticsLog.shared.append("[配置] 浏览器输出 \(CarPlayConfiguration.displayWidth)×\(CarPlayConfiguration.displayHeight) @ \(CarPlayConfiguration.fps)FPS / \(CarPlayConfiguration.codecName) / \(CarPlayConfiguration.performanceMode.rawValue)")
             browser.onState = { message in
                 DiagnosticsLog.shared.append(message)
                 DispatchQueue.main.async {
@@ -107,6 +104,7 @@ final class StubCarPlayEngine: ObservableObject, CarPlayEngine {
         output = nil
         browser?.stop()
         browser = nil
+        AudioSink.shared.onPCM = nil
         state = .idle
     }
 }

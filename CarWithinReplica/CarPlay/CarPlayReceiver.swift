@@ -18,6 +18,7 @@ final class CarPlayReceiver {
         RTSPControlServer.shared.onLog = { [weak self] in self?.onLog?("[端点] " + $0) }
         VideoSink.shared.onLog = { [weak self] in self?.onLog?("[视频] " + $0) }
         RTSPControlServer.shared.onMedia = { data in
+            SessionWatchdog.shared.noteActivity()
             VideoSink.shared.feed(data)
         }
         VideoSink.shared.start()
@@ -31,7 +32,8 @@ final class CarPlayReceiver {
         }
 
         startVideoListener()
-        BonjourPublisher.shared.start(name: "CarWithin", port: 7000)
+        CarPlayConfiguration.applyAppearance()
+        BonjourPublisher.shared.start(port: 7000)
         onLog?("[端点] 自建端点已启动，等待 iOS 的 CarPlay 栈接入")
     }
 
@@ -63,6 +65,7 @@ final class CarPlayReceiver {
             [weak self] content, _, isComplete, error in
             guard let self, error == nil else { connection.cancel(); return }
             if let content, !content.isEmpty {
+                SessionWatchdog.shared.noteActivity()
                 VideoSink.shared.feed(content)
             }
             if isComplete { connection.cancel(); return }

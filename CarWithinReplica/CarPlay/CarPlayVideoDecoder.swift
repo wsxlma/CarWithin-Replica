@@ -273,8 +273,22 @@ final class CarPlayVideoDecoder {
     fileprivate func emit(_ pixelBuffer: CVPixelBuffer) {
         let image = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = ciContext.createCGImage(image, from: image.extent) else { return }
-        let uiImage = UIImage(cgImage: cgImage)
-        guard let jpeg = uiImage.jpegData(compressionQuality: 0.7) else { return }
+        let original = UIImage(cgImage: cgImage)
+
+        // 输出尺寸跟随「分辨率 / 画面比例」设置：宽度超过声明值时等比缩小，
+        // 保持原始宽高比（浏览器端再按选定比例做填充或留边）。
+        let maxWidth = CGFloat(CarPlayConfiguration.displayWidth)
+        var target = original
+        if maxWidth > 0, original.size.width > maxWidth {
+            let scale = maxWidth / original.size.width
+            let size = CGSize(width: maxWidth, height: original.size.height * scale)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            target = renderer.image { _ in
+                original.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
+        let quality = CGFloat(CarPlayConfiguration.performanceMode.jpegQuality)
+        guard let jpeg = target.jpegData(compressionQuality: quality) else { return }
         onFrame?(jpeg)
     }
 }
