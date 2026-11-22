@@ -15,7 +15,7 @@ struct IAP2Packet: Equatable {
     var payload: Data
 
     static let sync: [UInt8] = [0xFF, 0x5A]
-    static let headerSize = 9
+    static let headerSize = 8
 
     init(control: UInt8, session: UInt8, sequence: UInt8,
          acknowledgement: UInt8, payload: Data = Data()) {
@@ -30,50 +30,55 @@ struct IAP2Packet: Equatable {
         IAP2Packet(control: 0xFF, session: 0, sequence: 0, acknowledgement: 0)
     }
 
+    /// 标准 iAP2 包：[0xFF 0x5A][Length:2B][Control][Session][Seq][Ack][Payload][Checksum]
+    /// Length = 从 Control 到 Checksum 的字节数（含 checksum，不含 sync/length 自身）。
+    /// Checksum = 256 - (前面所有字节之和 & 0xFF)，放在包的最后。
     func encoded() -> Data {
-        let total = IAP2Packet.headerSize + payload.count
-        var data = Data(capacity: total)
+        var body = Data()
+        body.append(control)
+        body.append(session)
+        body.append(sequence)
+        body.append(acknowledgement)
+        body.append(payload)
+
+        let length = body.count + 1     // +1 = checksum 自己
+        var data = Data()
         data.append(contentsOf: IAP2Packet.sync)
-        data.append(UInt8((total >> 8) & 0xFF))
-        data.append(UInt8(total & 0xFF))
-        data.append(control)
-        data.append(session)
-        data.append(sequence)
-        data.append(acknowledgement)
+        data.append(UInt8((length >> 8) & 0xFF))
+        data.append(UInt8(length & 0xFF))
+        data.append(body)
 
         var sum: UInt32 = 0
         for byte in data { sum &+= UInt32(byte) }
         data.append(UInt8(truncatingIfNeeded: 0x100 &- (sum & 0xFF)))
-
-        data.append(payload)
         return data
     }
 
     static func decode(_ data: Data) -> IAP2Packet? {
-        guard data.count >= headerSize else { return nil }
+        guard data.count >= 9 else { return nil }
         let start = data.startIndex
         guard data[start] == sync[0], data[start + 1] == sync[1] else { return nil }
         let length = (Int(data[start + 2]) << 8) | Int(data[start + 3])
-        guard length >= headerSize, data.count >= length else { return nil }
+        guard length >= 5, data.count >= 4 + length else { return nil }
 
+        // checksum 是全包最后一个字节
+        let checksumIndex = start + 4 + length - 1
         var sum: UInt32 = 0
-        for index in 0..<8 { sum &+= UInt32(data[start + index]) }
+        for index in start..<checksumIndex { sum &+= UInt32(data[index]) }
         let expected = UInt8(truncatingIfNeeded: 0x100 &- (sum & 0xFF))
-        guard data[start + 8] == expected else { return nil }
+        guard data[checksumIndex] == expected else { return nil }
 
-        let payloadStart = start + headerSize
-        let payloadEnd = start + length
+        let payloadStart = start + 8        // sync(2) + len(2) + control/session/seq/ack(4)
+        let payloadEnd = checksumIndex
+        let payload = payloadStart < payloadEnd ? Data(data[payloadStart..<payloadEnd]) : Data()
         return IAP2Packet(
             control: data[start + 4],
             session: data[start + 5],
             sequence: data[start + 6],
             acknowledgement: data[start + 7],
-            payload: data[payloadStart..<payloadEnd])
+            payload: payload)
     }
-}
 
-/// 从 TCP 字节流里切出完整封包：先对齐 sync，再按长度取整包。
-struct IAP2Parser {
     private var buffer = Data()
     private(set) var droppedBytes = 0
 
@@ -91,14 +96,16 @@ struct IAP2Parser {
         guard buffer.count >= 4 else { return nil }
         let start = buffer.startIndex
         let length = (Int(buffer[start + 2]) << 8) | Int(buffer[start + 3])
-        guard length >= IAP2Packet.headerSize, length <= 1 << 20 else {
+        // 新格式：length = control..checksum 的字节数；整包 = 4 + length
+        guard length >= 5, length <= 1 << 20 else {
             buffer.removeFirst()
             droppedBytes += 1
             return nil
         }
-        guard buffer.count >= length else { return nil }
-        let slice = buffer.prefix(length)
-        buffer.removeFirst(length)
+        let total = 4 + length
+        guard buffer.count >= total else { return nil }
+        let slice = buffer.prefix(total)
+        buffer.removeFirst(total)
         return IAP2Packet.decode(Data(slice))
     }
 
