@@ -24,15 +24,15 @@ enum AccessoryMessages {
 
     private static func text(_ value: String) -> Data { Data(value.utf8) }
 
-    /// 0x0002 IdentificationInformation：iAP2 标准识别响应（名称 + deviceID）。
+    /// 0x1D01：响应系统 0x1D00 识别请求（原版日志：收到 0x1D00 → 发送 0x1D01）。
     static func identification(name: String, deviceID: String) -> IAP2Message {
-        IAP2Message(id: IAP2MessageID.identificationInformation, parameters: [
+        IAP2Message(id: IAP2MessageID.identificationInfo, parameters: [
             .init(id: 0x00, value: text(name)),
             .init(id: 0x01, value: text(deviceID)),
         ])
     }
 
-    /// 0xE000 startSession：启动 CarPlay 会话，把地址/端口/deviceID 递给 iPhone。
+    /// 0x4301：响应系统 0x4300「CarPlay 可用」，请求在指定地址启动 CarPlay。
     static func startSession(address: String,
                              port: UInt16,
                              deviceID: String,
@@ -48,7 +48,7 @@ enum AccessoryMessages {
             parameters.append(.init(id: 0x05, value: text(wifi.password)))
             parameters.append(.init(id: 0x06, value: Data([wifi.channel])))
         }
-        return IAP2Message(id: IAP2MessageID.startSession, parameters: parameters)
+        return IAP2Message(id: IAP2MessageID.requestCarPlayStart, parameters: parameters)
     }
 
     /// 当前车机对外身份（与 Bonjour TXT 保持一致）。

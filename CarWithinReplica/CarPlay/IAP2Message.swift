@@ -75,6 +75,12 @@ enum IAP2MessageID {
     static let requestIdentification: UInt16 = 0x0001
     static let identificationInformation: UInt16 = 0x0002
     static let identificationAccepted: UInt16 = 0x0003
+    static let accessoryAuthAccepted: UInt16 = 0xAA05
+    static let requestIdentification: UInt16 = 0x1D00
+    static let identificationInfo: UInt16 = 0x1D01
+    static let identificationAccepted: UInt16 = 0x1D02
+    static let carPlayAvailable: UInt16 = 0x4300
+    static let requestCarPlayStart: UInt16 = 0x4301
     static let startIDPS: UInt16 = 0xEA00
     static let setFIDToken: UInt16 = 0xEA01
     static let startSession: UInt16 = 0xE000

@@ -83,33 +83,24 @@ final class DirectAccessoryTransport: NSObject {
         started = true
         onLog?("[直连] 本机配件端点已就绪（identifier=\(identifier), transportType=\(transportType)）")
 
-        // 端点一建好就主动声明身份——SameDeviceProbe 就是这么做的，
-        // 这一步才可能让 iOS 把我们认成 CarPlay 车机。
-        announceIdentity()
+        // 原版流程：端点建好后发一个「iAP2 在线探测」，等 iOS 服务回应，
+        // 之后系统会主动发 0xAA00/0x1D00/0x4300，我们逐条回（见 receive）。
+        sendProbe()
         return true
     }
 
-    /// 主动向系统声明：我是一台 CarPlay 车机。
-    private func announceIdentity() {
-        let ident = AccessoryMessages.identification(
-            name: CarPlayConfiguration.vehicleName,
-            deviceID: AccessoryMessages.deviceID)
-        send(encode(ident, packet: nil))
-        onLog?("[直连] → 已主动发送 identification（声明 CarPlay 车机）")
-
-        let config = IAP2Configuration.message()
-        send(encode(config, packet: nil))
-        onLog?("[直连] → 已主动发送车机配置 0x1D00")
-
-        let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
-        let session = AccessoryMessages.startSession(
-            address: host, port: 7000,
-            deviceID: AccessoryMessages.deviceID, wifi: nil)
-        send(encode(session, packet: nil))
-        onLog?("[直连] → 已主动发送 startSession（\(host):7000）")
+    /// iAP2 在线探测：一条 presence 链路包，提示 iOS 服务我们在了。
+    private func sendProbe() {
+        let probe = IAP2Packet.presence
+        send(probe.encoded())
+        onLog?("[直连] → 已发送 iAP2 在线探测，等待 iOS 服务回应")
     }
 
     /// 收到系统送来的字节流：切出 iAP2 封包，按认证流程回话。
+    /// 按原版日志的完整 iAP2 流程逐条响应：
+    ///   0xAA00→0xAA01 证书、0xAA02→0xAA03 签名、0xAA05 认证通过
+    ///   0x1D00→0x1D01 识别信息、0x1D02 识别通过
+    ///   0x4300→0x4301 请求启动 CarPlay（带本机地址），随后 iOS 连入 7000
     private func receive(_ data: Data) {
         onLog?("[直连] ← 收到配件数据 \(data.count)B")
         parser.append(data)
@@ -121,45 +112,45 @@ final class DirectAccessoryTransport: NSObject {
                 var reply = IAP2Packet.presence
                 reply.session = packet.session
                 send(reply.encoded())
+                onLog?("[直连] → 回送 presence")
                 continue
             }
             guard packet.payload.count >= 2 else { continue }
             let start = packet.payload.startIndex
             let messageID = (UInt16(packet.payload[start]) << 8) | UInt16(packet.payload[start + 1])
-            onLog?("[直连] iAP2 消息 0x\(String(messageID, radix: 16))")
+            onLog?("[直连] ← iAP2 消息 0x\(String(messageID, radix: 16))")
 
-            if messageID == IAP2MessageID.requestIdentification {
-                // iAP2 标准流程：主机发 RequestIdentification(0x0001)，配件回 0x0002。
-                let ident = AccessoryMessages.identification(
-                    name: CarPlayConfiguration.vehicleName,
-                    deviceID: AccessoryMessages.deviceID)
-                send(encode(ident, packet: packet))
-                onLog?("[直连] → 回送 IdentificationInformation(0x0002)")
-            } else if messageID == IAP2MessageID.startIDPS {
-                let ident = AccessoryMessages.identification(
-                    name: CarPlayConfiguration.vehicleName,
-                    deviceID: AccessoryMessages.deviceID)
-                send(encode(ident, packet: packet))
-                onLog?("[直连] → 已回送 identification（声明 CarPlay 车机）")
-                send(encode(IAP2Configuration.message(), packet: packet))
-                onLog?("[直连] → 已回送车机配置 0x1D00")
-            } else if messageID == IAP2MessageID.requestAuthenticationCert,
-                      let message = IAP2Authentication.certificateMessage() {
-                send(encode(message, packet: packet))
-                onLog?("[直连] → 已回送 MFi 证书链")
-            } else if messageID == IAP2MessageID.requestAuthenticationSignature {
-                let challenge = packet.payload.count > 4 ? Data(packet.payload[(start + 4)...]) : Data()
-                if let message = IAP2Authentication.responseMessage(challenge: challenge) {
-                    send(encode(message, packet: packet))
-                    onLog?("[直连] → 已回送 MFi 签名")
+            switch messageID {
+            case IAP2MessageID.requestAuthentication:            // 0xAA00
+                if let cert = IAP2Authentication.certificateMessage() {
+                    send(encode(cert, packet: packet))
+                    onLog?("[直连] → 回送 MFi 证书链 0xAA01")
                 }
-            } else if messageID == IAP2MessageID.authStatus {
+            case IAP2MessageID.requestAuthenticationSignature:   // 0xAA02
+                let challenge = packet.payload.count > 4 ? Data(packet.payload[(start + 4)...]) : Data()
+                if let resp = IAP2Authentication.responseMessage(challenge: challenge) {
+                    send(encode(resp, packet: packet))
+                    onLog?("[直连] → 回送 MFi 签名 0xAA03")
+                }
+            case IAP2MessageID.accessoryAuthAccepted:            // 0xAA05
+                onLog?("[直连] ← iOS 已接受配件认证")
+            case IAP2MessageID.requestIdentification:            // 0x1D00
+                let ident = AccessoryMessages.identification(
+                    name: CarPlayConfiguration.vehicleName,
+                    deviceID: AccessoryMessages.deviceID)
+                send(encode(ident, packet: packet))
+                onLog?("[直连] → 回送识别信息 0x1D01")
+            case IAP2MessageID.identificationAccepted:           // 0x1D02
+                onLog?("[直连] ← iOS 已接受配件识别，等待 CarPlay 可用通知")
+            case IAP2MessageID.carPlayAvailable:                 // 0x4300
                 let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
-                let session = AccessoryMessages.startSession(
+                let start = AccessoryMessages.startSession(
                     address: host, port: 7000,
                     deviceID: AccessoryMessages.deviceID, wifi: nil)
-                send(encode(session, packet: packet))
-                onLog?("[直连] → 已回送 startSession（\(host):7000）")
+                send(encode(start, packet: packet))
+                onLog?("[直连] → 回送 0x4301 请求在 \(host):7000 启动 CarPlay")
+            default:
+                break
             }
         }
     }
