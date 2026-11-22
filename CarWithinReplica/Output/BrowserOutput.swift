@@ -70,6 +70,13 @@ final class BrowserOutput {
         listener.start(queue: queue)
         self.listener = listener
 
+        VideoSink.shared.onFrame = { [weak self] jpeg in
+            self?.queue.async {
+                self?.latestJPEG = jpeg
+                self?.pushFrame()
+            }
+        }
+
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / Double(fps))
         timer.setEventHandler { [weak self] in self?.renderFrame() }
@@ -88,6 +95,10 @@ final class BrowserOutput {
     // MARK: - 帧
 
     private func renderFrame() {
+        if latestJPEG != nil {
+            pushFrame()
+            return
+        }
         let index = frameIndex
         frameIndex += 1
         let size = CGSize(width: width, height: height)

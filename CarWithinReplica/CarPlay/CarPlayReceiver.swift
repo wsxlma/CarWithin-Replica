@@ -16,6 +16,8 @@ final class CarPlayReceiver {
         stop()
         BonjourPublisher.shared.onLog = { [weak self] in self?.onLog?("[端点] " + $0) }
         RTSPControlServer.shared.onLog = { [weak self] in self?.onLog?("[端点] " + $0) }
+        VideoSink.shared.onLog = { [weak self] in self?.onLog?("[视频] " + $0) }
+        VideoSink.shared.start()
 
         do {
             try RTSPControlServer.shared.start(port: 7000)
@@ -29,6 +31,7 @@ final class CarPlayReceiver {
     }
 
     func stop() {
+        VideoSink.shared.stop()
         RTSPControlServer.shared.stop()
         BonjourPublisher.shared.stop()
         videoListener?.cancel()
@@ -54,7 +57,7 @@ final class CarPlayReceiver {
             [weak self] content, _, isComplete, error in
             guard let self, error == nil else { connection.cancel(); return }
             if let content, !content.isEmpty {
-                self.onLog?("[端点] 收到媒体数据 \(content.count)B")
+                VideoSink.shared.feed(content)
             }
             if isComplete { connection.cancel(); return }
             self.readVideo(connection)
