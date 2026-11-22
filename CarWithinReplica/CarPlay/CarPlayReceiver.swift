@@ -21,6 +21,8 @@ final class CarPlayReceiver {
             VideoSink.shared.feed(data)
         }
         VideoSink.shared.start()
+        AudioSink.shared.onLog = { [weak self] in self?.onLog?("[音频] " + $0) }
+        AudioSink.shared.start()
 
         do {
             try RTSPControlServer.shared.start(port: 7000)
@@ -34,6 +36,7 @@ final class CarPlayReceiver {
     }
 
     func stop() {
+        AudioSink.shared.stop()
         VideoSink.shared.stop()
         RTSPControlServer.shared.stop()
         BonjourPublisher.shared.stop()

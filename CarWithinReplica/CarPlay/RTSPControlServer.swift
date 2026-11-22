@@ -131,7 +131,11 @@ final class RTSPControlServer {
         case "SETUP":
             let session = sessionIdentifier()
             extraHeaders.append("Session: \(session);timeout=60")
-            if let transport = setupTransport(request.headers["transport"] ?? "") {
+            let bodyText = String(decoding: request.body, as: UTF8.self)
+            let isAudio = bodyText.localizedCaseInsensitiveContains("audio")
+                || bodyText.localizedCaseInsensitiveContains("AAC")
+                || bodyText.contains("4194304")
+            if let transport = setupTransport(request.headers["transport"] ?? "", audio: isAudio) {
                 extraHeaders.append("Transport: \(transport.header)")
                 onLog?("SETUP 已分配媒体端口 \(transport.port)，类型 \(transport.kind)")
             }
@@ -187,7 +191,7 @@ final class RTSPControlServer {
     }
 
     /// 根据 SETUP 的 Transport 头分配媒体端口，等 iPhone 把视频送进来。
-    private func setupTransport(_ requested: String) -> MediaTransport? {
+    private func setupTransport(_ requested: String, audio: Bool) -> MediaTransport? {
         let isTCP = requested.uppercased().contains("TCP")
         let isUDP = requested.uppercased().contains("UDP")
         guard isTCP || isUDP else { return nil }
@@ -205,8 +209,8 @@ final class RTSPControlServer {
             }
             listener.newConnectionHandler = { [weak self] (connection: NWConnection) in
                 connection.start(queue: self?.queue ?? .main)
-                self?.onLog?("媒体连接已建立（端口 \(port)）")
-                self?.readMedia(connection)
+                self?.onLog?("媒体连接已建立（端口 \(port)，\(audio ? "音频" : "视频")）")
+                self?.readMedia(connection, audio: audio)
             }
             listener.start(queue: queue)
             mediaListeners.append(listener)
@@ -219,13 +223,19 @@ final class RTSPControlServer {
         return MediaTransport(header: header, port: Int(base), kind: kind)
     }
 
-    private func readMedia(_ connection: NWConnection) {
+    private func readMedia(_ connection: NWConnection, audio: Bool) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 22) {
             [weak self] content, _, isComplete, error in
             guard let self, error == nil else { connection.cancel(); return }
-            if let content, !content.isEmpty { self.onMedia?(content) }
+            if let content, !content.isEmpty {
+                if audio {
+                    AudioSink.shared.feed(content)
+                } else {
+                    self.onMedia?(content)
+                }
+            }
             if isComplete { connection.cancel(); return }
-            self.readMedia(connection)
+            self.readMedia(connection, audio: audio)
         }
     }
 }
