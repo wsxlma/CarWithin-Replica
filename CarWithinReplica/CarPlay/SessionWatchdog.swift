@@ -18,6 +18,7 @@ final class SessionWatchdog {
     private var restartCount = 0
     private var restarting = false
     private var lastSignature = ""
+    private var hadActivity = false
 
     private init() {}
 
@@ -41,6 +42,7 @@ final class SessionWatchdog {
         expectedRunning = true
         lastActivityAt = Date()
         restartCount = 0
+        hadActivity = false
         CarPlayConfiguration.degradation = 0
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -76,6 +78,7 @@ final class SessionWatchdog {
     /// 视频/音频有数据进来时调用，作为「链路还活着」的证据。
     func noteActivity() {
         lastActivityAt = Date()
+        hadActivity = true
     }
 
     /// 浏览器端上报卡顿时调用。
@@ -95,7 +98,8 @@ final class SessionWatchdog {
             return
         }
 
-        guard force || RTSPControlServer.shared.lastClientAt != nil else { return }
+        // 只有真正出过画面、之后长时间无数据，才算卡顿，避免未连上时空转重启。
+        guard hadActivity, RTSPControlServer.shared.lastClientAt != nil else { return }
         let idle = Date().timeIntervalSince(lastActivityAt)
         guard idle > 30 else { return }
         performRestart(reason: String(format: "连接后 %.0f 秒无媒体数据", idle))
@@ -117,6 +121,7 @@ final class SessionWatchdog {
             CarPlayReceiver.shared.stop()
             CarPlayReceiver.shared.start()
             self?.lastActivityAt = Date()
+            self?.hadActivity = false
             self?.queue.async { self?.restarting = false }
         }
     }
