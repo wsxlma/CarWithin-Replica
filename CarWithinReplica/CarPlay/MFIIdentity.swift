@@ -48,15 +48,38 @@ final class MFIIdentity {
             return steps + ["private.x963 读取失败"]
         }
 
-        let scalar: Data
-        if keyData.count == 65, keyData.first == 0x04 {
-            scalar = keyData.dropFirst()
+        // 私钥可能是裸标量、x963、base64 文本或 DER，逐个尝试。
+        let normalized = Self.normalize(keyData)
+        steps.append("私钥原始 \(keyData.count)B，归一化 \(normalized.count)B")
+
+        var scalar: Data?
+        if normalized.count == 32 {
+            scalar = normalized
+        } else if normalized.count == 65, normalized.first == 0x04 {
+            scalar = normalized.dropFirst()
         } else {
-            scalar = keyData
+            // 交给 Security 解析 DER/PKCS#8
+            let attributes: [String: Any] = [
+                kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+                kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+                kSecAttrKeySizeInBits as String: 256,
+            ]
+            var error: Unmanaged<CFError>?
+            if let secKey = SecKeyCreateWithData(normalized as CFData, attributes as CFDictionary, &error),
+               let raw = SecKeyCopyExternalRepresentation(secKey, &error) as Data? {
+                if raw.count == 32 {
+                    scalar = raw
+                } else if raw.count == 65, raw.first == 0x04 {
+                    scalar = raw.dropFirst()
+                }
+            } else if let error = error?.takeRetainedValue() {
+                steps.append("Security 解析失败：\(error.localizedDescription)")
+            }
         }
-        guard scalar.count == 32,
+
+        guard let scalar, scalar.count == 32,
               let key = try? P256.Signing.PrivateKey(rawRepresentation: scalar) else {
-            return steps + ["私钥格式不符（\(keyData.count) 字节）"]
+            return steps + ["私钥格式仍不支持（首位 \(Self.hexPrefix(normalized))）"]
         }
         privateKey = key
         steps.append("私钥：P-256 已载入")
@@ -82,6 +105,29 @@ final class MFIIdentity {
     func sign(_ data: Data) -> Data? {
         guard let privateKey else { return nil }
         return try? privateKey.signature(for: data).derRepresentation
+    }
+
+    /// PEM -> base64 -> 原样，三种形式归一。
+    private static func normalize(_ data: Data) -> Data {
+        if let text = String(data: data, encoding: .utf8) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.contains("-----BEGIN") {
+                let body = trimmed
+                    .split(separator: "\n")
+                    .filter { !$0.hasPrefix("-----") }
+                    .joined()
+                if let decoded = Data(base64Encoded: body) { return decoded }
+            }
+            if trimmed.allSatisfy({ $0.isASCII && !$0.isNewline ? $0.isLetter || $0.isNumber || "+/=".contains($0) : true }),
+               let decoded = Data(base64Encoded: trimmed) {
+                return decoded
+            }
+        }
+        return data
+    }
+
+    private static func hexPrefix(_ data: Data, count: Int = 8) -> String {
+        data.prefix(count).map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 
     private func locate(_ name: String) -> URL? {
