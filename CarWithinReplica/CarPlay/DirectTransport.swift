@@ -26,6 +26,8 @@ final class DirectTransport {
 
     func start(identifier: String = "CarWithin", transportType: Int32 = 2) -> Bool {
         let candidates = [
+            "/System/Library/PrivateFrameworks/CarPlayServices.framework/CarPlayServices",
+            "/usr/lib/libIOAccessoryManager.dylib",
             "/System/Library/PrivateFrameworks/CoreAccessories.framework/CoreAccessories",
             "/System/Library/PrivateFrameworks/CarKit.framework/CarKit",
             "/System/Library/PrivateFrameworks/CarPlay.framework/CarPlay",
