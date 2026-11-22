@@ -138,10 +138,11 @@ enum ACCBridge {
         }
         typealias ConnectionFn = @convention(c) (AnyObject, Selector, Int32, NSString) -> AnyObject?
         let connectionFn = unsafeBitCast(connectionIMP, to: ConnectionFn.self)
+        let accessoryID = MFIIdentity.shared.identifier
 
         var connectionUUID: NSUUID?
         for type in Int32(0)...Int32(8) {
-            guard let created = connectionFn(client, connectionSelector, type, "CarWithin" as NSString) else {
+            guard let created = connectionFn(client, connectionSelector, type, accessoryID as NSString) else {
                 steps.append("createConnection(type=\(type)) → nil")
                 continue
             }
@@ -208,7 +209,7 @@ enum ACCBridge {
 
         // 只试一次：transport=1, protocol=4, publish=false（block 仍为 nil）
         let attempt = endpointFn(client, endpointSelector, 1, 4,
-                                 "CarWithin" as NSString, nil, uuid, false)
+                                 accessoryID as NSString, nil, uuid, false)
         steps.append("createEndpoint(transport=1, protocol=4, publish=false) → \(attempt.map { String(describing: $0) } ?? "nil")")
 
         return steps
@@ -270,7 +271,7 @@ enum ACCBridge {
         for transport in Int32(1)...Int32(3) {
             for proto in Int32(0)...Int32(5) {
                 let result = endpointFn(client, endpointSelector, transport, proto,
-                                        uuid.uuidString as NSString, handler as AnyObject, uuid, true)
+                                        MFIIdentity.shared.identifier as NSString, handler as AnyObject, uuid, true)
                 if let result {
                     steps.append("createEndpoint(transport=\(transport), protocol=\(proto), identifier=UUID) → \(result)")
                     return steps

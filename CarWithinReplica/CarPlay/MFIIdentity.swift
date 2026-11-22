@@ -15,6 +15,8 @@ final class MFIIdentity {
     private(set) var chainData: Data?
     private(set) var privateKey: P256.Signing.PrivateKey?
     private(set) var isReady = false
+    /// 证书主题里的 IPA 编号，用作 ACC 的配件标识符。
+    private(set) var identifier = "CarWithin"
 
     private init() {}
 
@@ -32,6 +34,7 @@ final class MFIIdentity {
         leaf = certificate
 
         let summary = SecCertificateCopySubjectSummary(certificate) as String? ?? "未知"
+        identifier = summary
         steps.append("叶子证书：\(summary)")
 
         if let p7bURL = locate("certificate.p7b"), let p7b = try? Data(contentsOf: p7bURL) {
