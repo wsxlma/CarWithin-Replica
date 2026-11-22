@@ -230,6 +230,7 @@ final class CarPlayVideoDecoder {
             blockLength: payload.count,
             blockAllocator: kCFAllocatorDefault,
             customBlockSource: nil,
+            offsetToData: 0,
             dataLength: payload.count,
             flags: 0,
             blockBufferOut: &blockBuffer)
@@ -257,7 +258,6 @@ final class CarPlayVideoDecoder {
             sampleTimingArray: &timing,
             sampleSizeEntryCount: 1,
             sampleSizeArray: &sampleSize,
-            offsetToData: 0,
             sampleBufferOut: &sampleBuffer)
         guard blockStatus == noErr, let sampleBuffer else { return }
 
