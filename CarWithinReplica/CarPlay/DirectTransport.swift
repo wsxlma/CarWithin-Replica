@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import ObjectiveC
 
 /// 原版真正使用的直连通道。
@@ -18,15 +19,28 @@ final class DirectTransport {
     private init() {}
 
     func start(identifier: String = "CarWithin", transportType: Int32 = 2) -> Bool {
-        guard let handle = dlopen(
+        let candidates = [
             "/System/Library/PrivateFrameworks/CoreAccessories.framework/CoreAccessories",
-            RTLD_NOW) else {
-            onLog?("CoreAccessories 加载失败")
-            return false
+            "/System/Library/PrivateFrameworks/CarKit.framework/CarKit",
+            "/System/Library/PrivateFrameworks/CarPlay.framework/CarPlay",
+            "/System/Library/PrivateFrameworks/AccessoryTransport.framework/AccessoryTransport",
+            "/System/Library/PrivateFrameworks/IAP.framework/IAP",
+            "/System/Library/PrivateFrameworks/ExternalAccessory.framework/ExternalAccessory",
+            "/System/Library/PrivateFrameworks/CarPlayUIServices.framework/CarPlayUIServices",
+        ]
+        var found: AnyClass?
+        for path in candidates {
+            guard let handle = dlopen(path, RTLD_NOW) else { continue }
+            if let match = NSClassFromString("DirectAccessoryTransport") {
+                found = match
+                onLog?("DirectAccessoryTransport 命中 \(path)")
+                break
+            }
+            dlclose(handle)
         }
-        _ = handle
 
-        guard let found = NSClassFromString("DirectAccessoryTransport") else {
+        guard let found else {
+            onLog?(Self.imageReport())
             onLog?("未找到 DirectAccessoryTransport")
             return false
         }
@@ -62,6 +76,19 @@ final class DirectTransport {
         let ok = unsafeBitCast(method_getImplementation(method), to: WriteFn.self)(
             object, selector, data as NSData)
         if !ok { onLog?("writeData 返回 false") }
+    }
+
+    /// 列出已加载镜像中名字带 Accessory / Car 的，便于下一次定位。
+    private static func imageReport() -> String {
+        var lines: [String] = ["已加载镜像（Accessory / Car）："]
+        for index in 0..<_dyld_image_count() {
+            guard let name = _dyld_get_image_name(index) else { continue }
+            let path = String(cString: name)
+            if path.contains("Accessory") || path.contains("Car") {
+                lines.append("  " + path)
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - 私有
