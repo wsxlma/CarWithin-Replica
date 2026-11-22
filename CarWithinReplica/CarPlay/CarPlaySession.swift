@@ -301,6 +301,96 @@ enum ACCBridge {
         return entitlements.keys.sorted().joined(separator: ", ")
     }
 
+    // MARK: - DirectAccessoryTransport 用的封装（照原版接口）
+
+    private static func accClass() -> AnyClass? {
+        guard dlopen(frameworkPath, RTLD_NOW) != nil else { return nil }
+        return NSClassFromString("ACCTransportClient")
+    }
+
+    static func sharedTransportClient() -> AnyObject? {
+        guard let cls = accClass(), let meta = object_getClass(cls) else { return nil }
+        let sel = NSSelectorFromString("sharedClient")
+        guard let imp = class_getMethodImplementation(meta, sel) else { return nil }
+        typealias Fn = @convention(c) (AnyObject, Selector) -> AnyObject?
+        return unsafeBitCast(imp, to: Fn.self)(cls as AnyObject, sel)
+    }
+
+    static func createConnection(type: Int32, identifier: String) -> String? {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return nil }
+        let sel = NSSelectorFromString("createConnectionWithType:andIdentifier:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return nil }
+        typealias Fn = @convention(c) (AnyObject, Selector, Int32, NSString) -> AnyObject?
+        guard let created = unsafeBitCast(imp, to: Fn.self)(
+            client, sel, type, identifier as NSString) else { return nil }
+        return (created as? String) ?? (created as? NSString).map { $0 as String }
+    }
+
+    /// 建配件端点。dataOutHandler 用单参数 block（与原版 onData: void(^)(NSData*) 一致）。
+    static func createEndpoint(transportType: Int32,
+                               protocolType: Int32,
+                               identifier: String,
+                               connectionUUID: String,
+                               publishConnection: Bool,
+                               onData: @escaping (Data) -> Void) -> String? {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return nil }
+        let sel = NSSelectorFromString(
+            "createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return nil }
+
+        typealias Fn = @convention(c) (AnyObject, Selector, Int32, Int32, NSString,
+                                       AnyObject, NSString, Bool) -> AnyObject?
+        let handler: @convention(block) (AnyObject) -> Void = { payload in
+            if let data = payload as? Data {
+                onData(data)
+            } else if let nsdata = payload as? NSData {
+                onData(Data(referencing: nsdata))
+            }
+        }
+        guard let created = unsafeBitCast(imp, to: Fn.self)(
+            client, sel, transportType, protocolType,
+            identifier as NSString, handler as AnyObject,
+            connectionUUID as NSString, publishConnection) else {
+            return nil
+        }
+        return (created as? String) ?? (created as? NSString).map { $0 as String }
+    }
+
+    static func publishConnection(uuid: String) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("publishConnectionWithUUID:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString)
+    }
+
+    static func sendOutgoingData(_ data: Data, endpointUUID: String, connectionUUID: String) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("sendOutgoingData:forEndpointWithUUID:connectionUUID:withReply:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, NSData, NSString, NSString, AnyObject?) -> Void
+        unsafeBitCast(imp, to: Fn.self)(client, sel, data as NSData,
+                                       endpointUUID as NSString,
+                                       connectionUUID as NSString, nil)
+        return true
+    }
+
+    static func destroyEndpoint(uuid: String) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("destroyEndpointWithUUID:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString)
+    }
+
+    static func destroyConnection(uuid: String) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("destroyConnectionWithUUID:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString)
+    }
+
     private static func signature(of method: Method) -> String {
         guard let encoding = method_getTypeEncoding(method) else { return "（无类型编码）" }
         let raw = String(cString: encoding)
@@ -520,6 +610,11 @@ final class CarPlaySession {
         CarPlayConfiguration.summary().forEach { onLog?("[配置] " + $0) }
         onLog?("[iAP2] " + IAP2Configuration.summary())
 
+        // 直连配件端点：照原版 DirectAccessoryTransport（transportType=2）建本机配件端点。
+        DirectAccessoryTransport.shared.onLog = { [weak self] message in self?.onLog?(message) }
+        _ = DirectAccessoryTransport.shared.start(
+            identifier: CarPlayConfiguration.vehicleName, transportType: 2)
+
         CarPlayReceiver.shared.onLog = { [weak self] message in self?.onLog?(message) }
         CarPlayReceiver.shared.start()
 
@@ -528,6 +623,7 @@ final class CarPlaySession {
     }
 
     func stop() {
+        DirectAccessoryTransport.shared.stop()
         SessionWatchdog.shared.stop()
         CarPlayReceiver.shared.stop()
         DirectTransport.shared.stop()
