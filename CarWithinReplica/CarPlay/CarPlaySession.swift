@@ -371,6 +371,16 @@ enum ACCBridge {
         return unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString)
     }
 
+    /// 单独注册端点的数据回调（ACC 的字典属性，可能才是 onData 的真正入口）。
+    static func setEndpointDataOutHandlers(_ handlers: [String: Any]) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("setEndpointDataOutHandlers:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, AnyObject) -> Void
+        unsafeBitCast(imp, to: Fn.self)(client, sel, handlers as NSDictionary)
+        return true
+    }
+
     /// 数据方向：配件 → 系统。主动发 iAP2 消息给 iOS 用这个。
     static func processIncomingData(_ data: Data, endpointUUID: String) -> Bool {
         guard let cls = accClass(), let client = sharedTransportClient() else { return false }
