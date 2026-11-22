@@ -513,20 +513,15 @@ final class CarPlaySession {
             onLog?("[iAP2] 0xAA01 证书消息已构造（\(certificate.encoded().count)B）")
         }
 
-        let steps = ACCBridge.connect()
-        steps.forEach { onLog?("[ACC] " + $0) }
+        // 自建端点：Bonjour 广播 + RTSP 控制 + 视频通道，等 iOS 的 CarPlay 栈接入。
+        // 这条链路不依赖 ACCTransportClient，也不需要配件 entitlement。
+        CarPlayReceiver.shared.onLog = { [weak self] message in self?.onLog?(message) }
+        CarPlayReceiver.shared.start()
 
-        // 验证 B：带真实 block 再试一次
-        ACCBridge.createEndpointWithBlock().forEach { onLog?("[B] " + $0) }
-
-        // ACC 需要 accessories 权限，自签包拿不到；原版走的是 DirectAccessoryTransport。
-        let direct = DirectTransport.shared
-        direct.onLog = { [weak self] message in self?.onLog?("[直连] " + message) }
-        direct.onData = { [weak self] data in self?.consumeDirect(data) }
-        _ = direct.start()
     }
 
     func stop() {
+        CarPlayReceiver.shared.stop()
         DirectTransport.shared.stop()
         controlListener?.cancel(); controlListener = nil
         dataListener?.cancel(); dataListener = nil
