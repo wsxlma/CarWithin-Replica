@@ -44,8 +44,12 @@ final class PairingState {
     /// /auth-setup：用 MFi 私钥对挑战签名，生成 MFiSAP 响应。
     func authSetup(_ body: Data) -> Data {
         let items = TLV8.decode(body)
-        let challenge = items.first(where: { $0.type == 0x01 })?.value
-            ?? Data("CarWithin-MFiSAP".utf8)
+        let challenge: Data
+        if let item = items.first(where: { $0.type == 0x01 }) {
+            challenge = item.value
+        } else {
+            challenge = Data("CarWithin-MFiSAP".utf8)
+        }
         guard let signature = MFIIdentity.shared.sign(challenge) else {
             return TLV8.encode([.init(type: 0x06, value: Data([0]))])
         }
