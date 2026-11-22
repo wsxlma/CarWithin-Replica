@@ -15,9 +15,13 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
     static let shared = BLEBootstrap()
     var onLog: ((String) -> Void)?
 
-    /// 原版广播的服务 UUID（16-bit 0xFC94）。
+    /// 车机声明支持 CarPlay 的发现 UUID（车机开发文档：配件端蓝牙 CarPlay EIR 扩展）。
+    /// 少了这个，iPhone 扫到外设也不会认成 CarPlay，配对框自然不弹。
+    private let carPlayUUID = CBUUID(string: "EC884348-CD41-40A2-9727-575D50BF1FD3")
+    /// 配件端 iAP2 EIR 扩展 UUID（同文档）。
+    private let iap2UUID = CBUUID(string: "FFCACADE-AFDE-CADE-DEFA-CADE00000000")
+    /// 原版 strings 里的数据服务（0xFC94）与特征。
     private let serviceUUID = CBUUID(string: "0000FC94-0000-1000-8000-00805F9B34FB")
-    /// 原版 strings 里与之相邻的第二个 UUID，作数据特征。
     private let characteristicUUID = CBUUID(string: "F20BFCDB-B5B1-484F-AFBA-29DDE86C972E")
 
     private var manager: CBPeripheralManager?
@@ -83,11 +87,14 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             properties: [.read, .write, .writeWithoutResponse, .notify, .indicate],
             value: nil,
             permissions: [.readable, .writeable])
-        let service = CBMutableService(type: serviceUUID, primary: true)
-        service.characteristics = [characteristic]
+        // CarPlay 发现服务排第一位，iAP2 数据服务跟上。
+        for uuid in [carPlayUUID, iap2UUID, serviceUUID] {
+            let service = CBMutableService(type: uuid, primary: true)
+            service.characteristics = [characteristic]
+            peripheral.add(service)
+        }
         self.characteristic = characteristic
-        peripheral.add(service)
-        onLog?("[BLE] GATT 服务已注册：0xFC94 / 特征 F20BFCDB")
+        onLog?("[BLE] GATT 服务已注册：CarPlay(EC884348) + iAP2(FFCACADE) + 0xFC94")
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
@@ -97,11 +104,31 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         onLog?("[BLE] GATT 服务已添加，开始广播")
+        // AD 包必须带 CarPlay TLV 载荷（配对 flag / 能力掩码 / 设备 MAC），
+        // 否则 iPhone 只看到一个普通外设，不认它是 CarPlay（真机抓包结论）。
         let advertisement: [String: Any] = [
             CBAdvertisementDataLocalNameKey: CarPlayConfiguration.vehicleName,
-            CBAdvertisementDataServiceUUIDsKey: [serviceUUID, characteristicUUID],
+            CBAdvertisementDataServiceUUIDsKey: [carPlayUUID, iap2UUID, serviceUUID],
+            CBAdvertisementDataServiceDataKey: [carPlayUUID: carPlayTLV()],
         ]
         peripheral.startAdvertising(advertisement)
+    }
+
+    /// CarPlay TLV 载荷：element = id(1) + len(1) + value。
+    ///   0x01 配对 flag、0x02 能力掩码、0x03 设备 MAC（车机开发文档 IE 结构）。
+    private func carPlayTLV() -> Data {
+        var tlv = Data()
+        // 配对 flag：已声明 CarPlay + iAP2
+        tlv.append(contentsOf: [0x01, 0x01, 0x03])
+        // 能力掩码：CarPlay=0x01 | iAP2=0x02 | H.265=0x04 | 音频=0x08
+        let capability: UInt16 = 0x000F
+        tlv.append(0x02); tlv.append(0x02)
+        tlv.append(UInt8(capability & 0xFF)); tlv.append(UInt8(capability >> 8))
+        // 设备 MAC（与 Bonjour TXT 的 deviceid 一致）
+        let mac: [UInt8] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
+        tlv.append(0x03); tlv.append(UInt8(mac.count))
+        tlv.append(contentsOf: mac)
+        return tlv
     }
 
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
@@ -109,7 +136,8 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             onLog?("[BLE] 广播启动失败：\(error.localizedDescription)")
             return
         }
-        onLog?("[BLE] 广播已启动：\(CarPlayConfiguration.vehicleName) · 服务 0xFC94")
+        onLog?("[BLE] 广播已启动：\(CarPlayConfiguration.vehicleName)")
+        onLog?("[BLE] AD 包：CarPlay UUID EC884348 + iAP2 UUID FFCACADE + TLV(配对/能力/MAC)")
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
