@@ -36,12 +36,17 @@ final class DirectTransport {
         ]
         var found: AnyClass?
         for path in candidates {
-            guard let handle = dlopen(path, RTLD_NOW) else { continue }
+            let short = (path as NSString).lastPathComponent
+            guard let handle = dlopen(path, RTLD_NOW) else {
+                onLog?("候选 \(short)：加载失败")
+                continue
+            }
             if let match = NSClassFromString("DirectAccessoryTransport") {
                 found = match
                 onLog?("DirectAccessoryTransport 命中 \(path)")
                 break
             }
+            onLog?("候选 \(short)：已加载，无此类")
             dlclose(handle)
         }
 
@@ -90,7 +95,7 @@ final class DirectTransport {
         for index in 0..<dyldImageCount() {
             guard let name = dyldImageName(index) else { continue }
             let path = String(cString: name)
-            if path.contains("Accessory") || path.contains("Car") {
+            if true {
                 lines.append("  " + path)
             }
         }
