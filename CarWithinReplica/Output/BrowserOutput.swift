@@ -1,11 +1,11 @@
 import Foundation
 import Network
 import UIKit
+import CryptoKit
 
-/// 浏览器输出：App 内起一个 HTTP 服务，同局域网设备用 `http://IP:端口` 打开。
-///
-/// 当前实现为 MJPEG 推流（multipart/x-mixed-replace），兼容性最好；
-/// 原版是 WebSocket + MSE/WebCodecs，画质更低延迟，但需要浏览器端播放器。
+/// 浏览器输出：HTTP 服务 + WebSocket 视频通道。
+/// 页面优先用 WebCodecs 解码 H.265/H.264 并渲染 canvas；
+/// 浏览器不支持时回退到 MJPEG。
 final class BrowserOutput {
     private let port: UInt16
     private let width: Int
@@ -14,11 +14,16 @@ final class BrowserOutput {
 
     private let queue = DispatchQueue(label: "carwithin.browser")
     private var listener: NWListener?
-    private var streams: [ObjectIdentifier: NWConnection] = [:]
+    private var mjpegStreams: [ObjectIdentifier: NWConnection] = [:]
+    private var webSocketStreams: [ObjectIdentifier: NWConnection] = [:]
     private var timer: DispatchSourceTimer?
     private var frameIndex = 0
     private var latestJPEG: Data?
     private var startAttempts = 0
+
+    // 访问单元装配：把单个 NAL 聚成一帧
+    private var pendingUnit: Data = Data()
+    private var hasPendingUnit = false
 
     var onState: ((String) -> Void)?
 
@@ -76,6 +81,11 @@ final class BrowserOutput {
                 self?.pushFrame()
             }
         }
+        VideoSink.shared.onAccessUnit = { [weak self] nal, keyframe in
+            self?.queue.async {
+                self?.appendAccessUnit(nal, keyframe: keyframe)
+            }
+        }
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / Double(fps))
@@ -87,8 +97,10 @@ final class BrowserOutput {
     func stop() {
         timer?.cancel(); timer = nil
         listener?.cancel(); listener = nil
-        streams.values.forEach { $0.cancel() }
-        streams.removeAll()
+        mjpegStreams.values.forEach { $0.cancel() }
+        mjpegStreams.removeAll()
+        webSocketStreams.values.forEach { $0.cancel() }
+        webSocketStreams.removeAll()
         onState?("浏览器输出已停止")
     }
 
@@ -115,12 +127,12 @@ final class BrowserOutput {
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = .center
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedDigitSystemFont(ofSize: 96, weight: .bold),
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 72, weight: .bold),
                 .foregroundColor: UIColor.white,
                 .paragraphStyle: paragraph,
             ]
-            let text = "等待 CarPlay 画面\n\nCarPlay 会话尚未建立，\n建立后这里会显示实时画面。"
-            text.draw(in: CGRect(x: 0, y: size.height / 2 - 110, width: size.width, height: 220),
+            let text = "等待 CarPlay 画面\n\nCarPlay 会话尚未建立"
+            text.draw(in: CGRect(x: 0, y: size.height / 2 - 90, width: size.width, height: 180),
                       withAttributes: attributes)
         }
         latestJPEG = image.jpegData(compressionQuality: 0.6)
@@ -128,21 +140,63 @@ final class BrowserOutput {
     }
 
     private func pushFrame() {
-        guard let data = latestJPEG, !streams.isEmpty else { return }
+        guard let data = latestJPEG, !mjpegStreams.isEmpty else { return }
         let header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: \(data.count)\r\n\r\n"
         var packet = Data(header.utf8)
         packet.append(data)
         packet.append(Data("\r\n".utf8))
-        for connection in streams.values {
+        for connection in mjpegStreams.values {
             connection.send(content: packet, completion: .contentProcessed { _ in })
         }
     }
 
-    // MARK: - HTTP
+    /// 把单个 NAL 装配成访问单元，推给 WebSocket。
+    private func appendAccessUnit(_ nal: Data, keyframe: Bool) {
+        if hasPendingUnit && keyframe {
+            flushAccessUnit()
+        }
+        if !hasPendingUnit {
+            hasPendingUnit = true
+            pendingUnit.removeAll(keepingCapacity: true)
+        }
+        var length = UInt32(nal.count).bigEndian
+        pendingUnit.append(withUnsafeBytes(of: &length) { Data($0) })
+        pendingUnit.append(nal)
+    }
+
+    private func flushAccessUnit() {
+        guard hasPendingUnit, !pendingUnit.isEmpty, !webSocketStreams.isEmpty else {
+            pendingUnit.removeAll(keepingCapacity: true)
+            hasPendingUnit = false
+            return
+        }
+        var header = Data([0x82]) // 二进制帧，FIN
+        let size = pendingUnit.count
+        if size < 126 {
+            header.append(UInt8(0x80 | size))
+        } else if size < 65536 {
+            header.append(UInt8(0x80 | 126))
+            var big = UInt16(size).bigEndian
+            header.append(withUnsafeBytes(of: &big) { Data($0) })
+        } else {
+            header.append(UInt8(0x80 | 127))
+            var big = UInt64(size).bigEndian
+            header.append(withUnsafeBytes(of: &big) { Data($0) })
+        }
+        var packet = header
+        packet.append(pendingUnit)
+        for connection in webSocketStreams.values {
+            connection.send(content: packet, completion: .contentProcessed { _ in })
+        }
+        pendingUnit.removeAll(keepingCapacity: true)
+        hasPendingUnit = false
+    }
+
+    // MARK: - HTTP / WebSocket
 
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
             guard let self, let data, !data.isEmpty else {
                 connection.cancel()
                 return
@@ -150,13 +204,61 @@ final class BrowserOutput {
             let request = String(decoding: data, as: UTF8.self)
             if request.contains("GET /stream") {
                 self.startStream(connection)
+            } else if request.contains("GET /ws"),
+                      let key = Self.webSocketKey(from: request) {
+                self.startWebSocket(connection, key: key)
             } else {
                 self.respondIndex(connection)
             }
         }
     }
 
+    private func startStream(_ connection: NWConnection) {
+        mjpegStreams[ObjectIdentifier(connection)] = connection
+        let header = "HTTP/1.1 200 OK\r\n"
+            + "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+            + "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .failed = state {
+                self?.mjpegStreams.removeValue(forKey: ObjectIdentifier(connection))
+            }
+        }
+    }
+
+    private func startWebSocket(_ connection: NWConnection, key: String) {
+        webSocketStreams[ObjectIdentifier(connection)] = connection
+        let accept = Self.webSocketAccept(key)
+        let header = "HTTP/1.1 101 Switching Protocols\r\n"
+            + "Upgrade: websocket\r\n"
+            + "Connection: Upgrade\r\n"
+            + "Sec-WebSocket-Accept: \(accept)\r\n\r\n"
+        connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .failed = state {
+                self?.webSocketStreams.removeValue(forKey: ObjectIdentifier(connection))
+            }
+        }
+    }
+
+    private static func webSocketKey(from request: String) -> String? {
+        for line in request.components(separatedBy: "\r\n") {
+            if line.lowercased().hasPrefix("sec-websocket-key:") {
+                return line.dropFirst("sec-websocket-key:".count)
+                    .trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
+    }
+
+    private static func webSocketAccept(_ key: String) -> String {
+        let guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        let digest = Insecure.SHA1.hash(data: Data((key + guid).utf8))
+        return Data(digest).base64EncodedString()
+    }
+
     private func respondIndex(_ connection: NWConnection) {
+        let codec = SettingsStore.codec.contains("264") ? "avc1.42E01F" : "hvc1.1.6.L123.B0"
         let html = """
         <!doctype html><html lang="zh-CN"><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -164,11 +266,50 @@ final class BrowserOutput {
         <style>
         body{margin:0;background:#0b0f16;color:#e6edf7;font:16px -apple-system,sans-serif;
         display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
-        img{width:100%;max-width:1280px;border-radius:12px;box-shadow:0 8px 30px #0008}
-        p{opacity:.6;margin-top:12px}
+        canvas,img{width:100%;max-width:1280px;border-radius:12px;box-shadow:0 8px 30px #0008}
+        .status{opacity:.6;margin-top:12px;font-size:14px}
         </style>
-        <img src="/stream" alt="CarWithin">
-        <p>CarWithin · MJPEG \(width)×\(height)</p>
+        <canvas id="video" width="\(width)" height="\(height)"></canvas>
+        <img id="fallback" src="/stream" style="display:none">
+        <div class="status" id="status">正在连接…</div>
+        <script>
+        const codec="\(codec)";
+        const canvas=document.getElementById('video');
+        const ctx=canvas.getContext('2d');
+        const status=document.getElementById('status');
+        let decoder=null, ws=null, keyframeReady=false;
+
+        function showFallback(){canvas.style.display='none';document.getElementById('fallback').style.display='block';}
+
+        function initDecoder(){
+          if(typeof VideoDecoder==='undefined'){showFallback();return;}
+          try{
+            decoder=new VideoDecoder({output:(frame)=>{ctx.drawImage(frame,0,0,canvas.width,canvas.height);frame.close();},error:(e)=>{status.textContent='解码错误：'+e.message;}});
+            decoder.configure({codec:codec, optimizeForLatency:true});
+            status.textContent='WebCodecs 就绪，等待视频…';
+          }catch(e){showFallback();}
+        }
+
+        function connect(){
+          ws=new WebSocket('ws://'+location.host+'/ws');
+          ws.binaryType='arraybuffer';
+          ws.onopen=()=>{status.textContent='已连接，等待视频…';};
+          ws.onmessage=(event)=>{
+            const data=new Uint8Array(event.data);
+            if(data.length<5||!decoder)return;
+            const isKey=(data[4]&0x1F)===5||((data[4]>>1)&0x3F)===19||((data[4]>>1)&0x3F)===20;
+            if(!keyframeReady){if(!isKey)return;keyframeReady=true;}
+            try{
+              decoder.decode(new EncodedVideoChunk({type:isKey?'key':'delta',timestamp:performance.now(),data:data}));
+            }catch(e){status.textContent='解码失败：'+e.message;}
+          };
+          ws.onclose=()=>{status.textContent='连接断开，3 秒后重连…';keyframeReady=false;setTimeout(connect,3000);};
+          ws.onerror=()=>{showFallback();};
+        }
+
+        initDecoder();
+        connect();
+        </script>
         </html>
         """
         let body = Data(html.utf8)
@@ -179,20 +320,6 @@ final class BrowserOutput {
         connection.send(content: response, completion: .contentProcessed { _ in
             connection.cancel()
         })
-    }
-
-    private func startStream(_ connection: NWConnection) {
-        streams[ObjectIdentifier(connection)] = connection
-        let header = "HTTP/1.1 200 OK\r\n"
-            + "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
-            + "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
-        connection.send(content: Data(header.utf8),
-                        completion: .contentProcessed { _ in })
-        connection.stateUpdateHandler = { [weak self] state in
-            if case .failed = state {
-                self?.streams.removeValue(forKey: ObjectIdentifier(connection))
-            }
-        }
     }
 
     // MARK: - 地址
