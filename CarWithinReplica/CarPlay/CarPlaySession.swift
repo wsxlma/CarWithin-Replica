@@ -176,6 +176,20 @@ enum ACCBridge {
             steps.append("publishConnection → \(published)")
         }
 
+        // 看这条连接自己的标识与配件信息，endpoint 的 identifier 可能要跟它一致
+        let idSelector = NSSelectorFromString("identifierForConnectionWithUUID:")
+        if let imp = class_getMethodImplementation(cls, idSelector) {
+            typealias IdFn = @convention(c) (AnyObject, Selector, NSUUID) -> AnyObject?
+            let value = unsafeBitCast(imp, to: IdFn.self)(client, idSelector, uuid)
+            steps.append("connection identifier → \(value.map { String(describing: $0) } ?? "nil")")
+        }
+        let infoSelector = NSSelectorFromString("accessoryInfoForConnectionWithUUID:")
+        if let imp = class_getMethodImplementation(cls, infoSelector) {
+            typealias InfoFn = @convention(c) (AnyObject, Selector, NSUUID) -> AnyObject?
+            let value = unsafeBitCast(imp, to: InfoFn.self)(client, infoSelector, uuid)
+            steps.append("accessoryInfo → \(value.map { String(describing: $0) } ?? "nil")")
+        }
+
         // 打印连接属性，确认该连接声明支持的 transport 类型
         let propsSelector = NSSelectorFromString("propertiesForConnectionWithUUID:")
         if let imp = class_getMethodImplementation(cls, propsSelector) {
@@ -254,11 +268,16 @@ enum ACCBridge {
         let endpointFn = unsafeBitCast(endpointIMP, to: EndpointFn.self)
 
         for transport in Int32(1)...Int32(3) {
-            let result = endpointFn(client, endpointSelector, transport, 4,
-                                    "CarWithin" as NSString, handler as AnyObject, uuid, true)
-            steps.append("createEndpoint(transport=\(transport), 带 block) → \(result.map { String(describing: $0) } ?? "nil")")
-            if result != nil { break }
+            for proto in Int32(0)...Int32(5) {
+                let result = endpointFn(client, endpointSelector, transport, proto,
+                                        uuid.uuidString as NSString, handler as AnyObject, uuid, true)
+                if let result {
+                    steps.append("createEndpoint(transport=\(transport), protocol=\(proto), identifier=UUID) → \(result)")
+                    return steps
+                }
+            }
         }
+        steps.append("createEndpoint 全组 nil（identifier 用 connection UUID）")
         return steps
     }
 
