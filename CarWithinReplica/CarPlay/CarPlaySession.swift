@@ -468,6 +468,9 @@ final class CarPlaySession {
         state = .listening
         onLog?("等待连接：控制 \(controlPort) / 数据 \(dataPort)")
 
+        MFIIdentity.shared.load().forEach { onLog?("[MFI] " + $0) }
+        onLog?("[MFI] 状态：" + (MFIIdentity.shared.isReady ? "就绪" : "未就绪"))
+
         let steps = ACCBridge.connect()
         steps.forEach { onLog?("[ACC] " + $0) }
 
