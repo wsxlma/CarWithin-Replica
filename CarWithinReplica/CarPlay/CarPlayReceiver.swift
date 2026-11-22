@@ -17,6 +17,9 @@ final class CarPlayReceiver {
         BonjourPublisher.shared.onLog = { [weak self] in self?.onLog?("[端点] " + $0) }
         RTSPControlServer.shared.onLog = { [weak self] in self?.onLog?("[端点] " + $0) }
         VideoSink.shared.onLog = { [weak self] in self?.onLog?("[视频] " + $0) }
+        RTSPControlServer.shared.onMedia = { data in
+            VideoSink.shared.feed(data)
+        }
         VideoSink.shared.start()
 
         do {

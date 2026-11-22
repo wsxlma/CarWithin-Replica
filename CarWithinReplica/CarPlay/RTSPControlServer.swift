@@ -11,6 +11,9 @@ final class RTSPControlServer {
     var onMedia: ((Data) -> Void)?
 
     private var listener: NWListener?
+    private var mediaListeners: [NWListener] = []
+    private var sessionID: String?
+    private var nextPort: UInt16 = 50220
     private let queue = DispatchQueue(label: "carwithin.rtsp")
 
     private init() {}
@@ -32,6 +35,10 @@ final class RTSPControlServer {
     func stop() {
         listener?.cancel()
         listener = nil
+        mediaListeners.forEach { $0.cancel() }
+        mediaListeners.removeAll()
+        sessionID = nil
+        nextPort = 50220
         PairingState.shared.reset()
     }
 
@@ -99,36 +106,126 @@ final class RTSPControlServer {
     private func handle(_ request: Request, connection: NWConnection) {
         let fields = Array(request.headers.keys).sorted().joined(separator: ", ")
         onLog?("\(request.method) \(request.path) [\(request.body.count) 字节] 字段：\(fields)")
-        if request.path.hasPrefix("rtsp://") {
-            onMedia?(request.body)
-        }
 
         var payload = Data()
+        var extraHeaders: [String] = []
+
         switch request.path {
         case "/pair-setup":
             payload = PairingState.shared.pairSetup(request.body)
             onLog?("Pair-Setup 状态 \(PairingState.shared.setupState)")
         case "/pair-verify":
             payload = PairingState.shared.pairVerify(request.body)
-            onLog?("Pair-Verify 已通过，启用加密控制")
+            onLog?("Pair-Verify 完成，加密控制已启用")
         case "/auth-setup":
             payload = PairingState.shared.authSetup(request.body)
             onLog?("已生成 MFiSAP 响应（身份：\(MFIIdentity.shared.isReady ? "就绪" : "缺失")）")
         case "/info":
-            payload = Data("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>name</key><string>CarWithin</string></dict></plist>".utf8)
+            payload = infoPayload()
         default:
             break
         }
 
-        if request.method.uppercased() == "SETUP" {
-            onLog?("SETUP 字段：\(fields)")
-        } else if request.method.uppercased() == "RECORD" {
-            onLog?("已接受 CarPlay RECORD，等待视频")
+        let method = request.method.uppercased()
+        switch method {
+        case "SETUP":
+            let session = sessionIdentifier()
+            extraHeaders.append("Session: \(session);timeout=60")
+            if let transport = setupTransport(request.headers["transport"] ?? "") {
+                extraHeaders.append("Transport: \(transport.header)")
+                onLog?("SETUP 已分配媒体端口 \(transport.port)，类型 \(transport.kind)")
+            }
+        case "RECORD":
+            extraHeaders.append("Session: \(sessionIdentifier())")
+            onLog?("已接受 CarPlay RECORD，开始接收媒体")
+        case "GET", "POST", "ANNOUNCE":
+            break
+        default:
+            break
         }
 
-        let response = "RTSP/1.0 200 OK\r\nCSeq: \(request.headers["cseq"] ?? "1")\r\nContent-Type: application/octet-stream\r\nContent-Length: \(payload.count)\r\n\r\n"
-        var data = Data(response.utf8)
+        var head = "RTSP/1.0 200 OK\r\nCSeq: \(request.headers["cseq"] ?? "1")\r\n"
+        if !payload.isEmpty {
+            head += "Content-Type: application/octet-stream\r\n"
+        }
+        head += "Content-Length: \(payload.count)\r\n"
+        for extra in extraHeaders { head += extra + "\r\n" }
+        head += "\r\n"
+        var data = Data(head.utf8)
         data.append(payload)
         connection.send(content: data, completion: .contentProcessed { _ in })
+    }
+
+    private func sessionIdentifier() -> String {
+        if let existing = sessionID { return existing }
+        let created = UUID().uuidString.prefix(8)
+        sessionID = String(created)
+        return sessionID!
+    }
+
+    private func infoPayload() -> Data {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        <key>name</key><string>CarWithin</string>
+        <key>deviceID</key><string>AA:BB:CC:DD:EE:FF</string>
+        <key>model</key><string>CarWithin1,1</string>
+        <key>srcVers</key><string>700.1</string>
+        <key>features</key><integer>1517832183</integer>
+        <key>keepAliveLowPower</key><true/>
+        <key>keepAliveSendStatsAsBody</key><true/>
+        </dict></plist>
+        """
+        return Data(xml.utf8)
+    }
+
+    private struct MediaTransport {
+        var header: String
+        var port: Int
+        var kind: String
+    }
+
+    /// 根据 SETUP 的 Transport 头分配媒体端口，等 iPhone 把视频送进来。
+    private func setupTransport(_ requested: String) -> MediaTransport? {
+        let isTCP = requested.uppercased().contains("TCP")
+        let isUDP = requested.uppercased().contains("UDP")
+        guard isTCP || isUDP else { return nil }
+
+        let base = nextPort
+        nextPort += 2
+        let pair = base...(base + 1)
+
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
+        for port in pair {
+            guard let listener = try? NWListener(using: parameters,
+                                                on: NWEndpoint.Port(rawValue: port) ?? port) else {
+                continue
+            }
+            listener.newConnectionHandler = { [weak self] connection in
+                connection.start(queue: self?.queue ?? .main)
+                self?.onLog?("媒体连接已建立（端口 \(port)）")
+                self?.readMedia(connection)
+            }
+            listener.start(queue: queue)
+            mediaListeners.append(listener)
+        }
+
+        let kind = isTCP ? "TCP" : "UDP"
+        let header = isTCP
+            ? "RTP/AVP/TCP;unicast;interleaved=0-1;server_port=\(base)"
+            : "RTP/AVP/UDP;unicast;server_port=\(base)-\(base + 1)"
+        return MediaTransport(header: header, port: base, kind: kind)
+    }
+
+    private func readMedia(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 22) {
+            [weak self] content, _, isComplete, error in
+            guard let self, error == nil else { connection.cancel(); return }
+            if let content, !content.isEmpty { self.onMedia?(content) }
+            if isComplete { connection.cancel(); return }
+            self.readMedia(connection)
+        }
     }
 }
