@@ -8,8 +8,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "2.3.2"
-    CURRENT_PROJECT_VERSION: "34"
+    MARKETING_VERSION: "2.3.3"
+    CURRENT_PROJECT_VERSION: "35"
     SWIFT_VERSION: "5.9"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CODE_SIGN_STYLE: Manual
@@ -69,4 +69,5 @@ targets:
         NSLocationWhenInUseUsageDescription: CarWithin 仅使用定位权限读取当前 Wi-Fi 名称，不会收集位置坐标。
         UIBackgroundModes:
           - audio
+          - bluetooth-peripheral
         ITSAppUsesNonExemptEncryption: false

@@ -33,11 +33,18 @@ final class CarPlayReceiver {
 
         startVideoListener()
         CarPlayConfiguration.applyAppearance()
+
+        // BLE 引导：原版靠 CBPeripheralManager 广播 0xFC94 + L2CAP，
+        // 这才是触发「连接 CarPlay 车载」系统弹窗的开关。
+        BLEBootstrap.shared.onLog = { [weak self] in self?.onLog?("[BLE] " + $0) }
+        BLEBootstrap.shared.start()
+
         BonjourPublisher.shared.start(port: 7000)
         onLog?("[端点] 自建端点已启动，等待 iOS 的 CarPlay 栈接入")
     }
 
     func stop() {
+        BLEBootstrap.shared.stop()
         AudioSink.shared.stop()
         VideoSink.shared.stop()
         RTSPControlServer.shared.stop()
