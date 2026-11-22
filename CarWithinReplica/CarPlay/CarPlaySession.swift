@@ -371,6 +371,16 @@ enum ACCBridge {
         return unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString)
     }
 
+    /// 告诉 ACC 这条连接的认证状态（原版有 authenticated 状态跟踪，我们一直没调）。
+    static func setConnectionAuthenticated(uuid: String, state: Bool) -> Bool {
+        guard let cls = accClass(), let client = sharedTransportClient() else { return false }
+        let sel = NSSelectorFromString("setConnectionAuthenticated:state:")
+        guard let imp = class_getMethodImplementation(cls, sel) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString, Bool) -> Void
+        unsafeBitCast(imp, to: Fn.self)(client, sel, uuid as NSString, state)
+        return true
+    }
+
     /// 单独注册端点的数据回调（ACC 的字典属性，可能才是 onData 的真正入口）。
     static func setEndpointDataOutHandlers(_ handlers: [String: Any]) -> Bool {
         guard let cls = accClass(), let client = sharedTransportClient() else { return false }

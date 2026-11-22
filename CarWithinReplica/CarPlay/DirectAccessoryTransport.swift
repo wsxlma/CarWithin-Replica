@@ -77,18 +77,23 @@ final class DirectAccessoryTransport: NSObject {
 
         // 另注册一次数据回调（ACC 的字典属性），双保险。
         let handler: @convention(block) (AnyObject, AnyObject) -> Void = { [weak self] a, b in
+            // 诊断：block 一被调用就打日志，区分「系统没发」和「签名收不到」
+            self?.onLog?("[直连] dataOutHandler 被调用 a=\\(type(of: a)) b=\\(type(of: b))")
             if let d = a as? Data { self?.receive(d) }
             else if let d = b as? Data { self?.receive(d) }
             else if let d = a as? NSData { self?.receive(Data(referencing: d)) }
             else if let d = b as? NSData { self?.receive(Data(referencing: d)) }
+            else { self?.onLog?("[直连] dataOutHandler 参数无法识别为 Data") }
         }
         _ = ACCBridge.setEndpointDataOutHandlers([endpoint: handler])
         onLog?("[直连] 已注册 setEndpointDataOutHandlers")
         onLog?("[直连] 参数组合：transport=\(transportType) protocol=0 publish=false identifier=\(identifier)")
 
-        // 3) 发布连接（原版这里也返回 false，但端点已建起来，不阻塞）
+        // 3) 发布连接 + 标记认证状态（原版有 authenticated 跟踪，可能这是系统开口的开关）
         let published = ACCBridge.publishConnection(uuid: connectionUUID)
         onLog?("[直连] publishConnection → \(published)")
+        let authed = ACCBridge.setConnectionAuthenticated(uuid: connectionUUID, state: true)
+        onLog?("[直连] setConnectionAuthenticated(true) → \(authed)")
 
         started = true
         onLog?("[直连] 本机配件端点已就绪（identifier=\(identifier), transportType=\(transportType)）")
