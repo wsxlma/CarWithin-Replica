@@ -1,6 +1,10 @@
 import Foundation
 import CoreBluetooth
 
+private extension Data {
+    var hexString: String { map { String(format: "%02X", $0) }.joined() }
+}
+
 /// BLE 引导：复刻原版 `TDSCarKit.BLEBootstrap` 的完整形态。
 ///
 /// 原版做的事（从二进制符号还原）：
@@ -106,31 +110,32 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
             return
         }
         onLog?("[BLE] GATT 服务已添加，开始广播")
-        // AD 包必须带 CarPlay TLV 载荷（配对 flag / 能力掩码 / 设备 MAC），
+        // AD 包必须带 CarPlay TLV 载荷（配对 flag / 能力掩码），
         // 否则 iPhone 只看到一个普通外设，不认它是 CarPlay（真机抓包结论）。
-        let advertisement: [String: Any] = [
+        //
+        // 注意两条硬约束：
+        // 1) CBAdvertisementDataServiceDataKey 的 [CBUUID: Data] 嵌套字典桥接会崩
+        //    （真机崩溃栈：doesNotRecognizeSelector），TLV 必须放 Manufacturer Data（纯 NSData）。
+        // 2) 传统广播包上限 31 字节，只能放一个 128-bit 服务 UUID + 精简 TLV；
+        //    iAP2/0xFC94 靠 GATT 服务承载，不进 AD。
+        var advertisement: [String: Any] = [
             CBAdvertisementDataLocalNameKey: CarPlayConfiguration.vehicleName,
-            CBAdvertisementDataServiceUUIDsKey: [carPlayUUID, iap2UUID, serviceUUID],
-            CBAdvertisementDataServiceDataKey: [carPlayUUID: carPlayTLV()],
+            CBAdvertisementDataServiceUUIDsKey: [carPlayUUID],
         ]
+        var manufacturer = Data([0x4C, 0x00])   // Apple company ID（小端）
+        manufacturer.append(carPlayTLV())
+        advertisement[CBAdvertisementDataManufacturerDataKey] = manufacturer
+        onLog?("[BLE] AD 载荷 \(manufacturer.count)B：EC884348 + TLV\(carPlayTLV().hexString)")
         peripheral.startAdvertising(advertisement)
     }
 
-    /// CarPlay TLV 载荷：element = id(1) + len(1) + value。
-    ///   0x01 配对 flag、0x02 能力掩码、0x03 设备 MAC（车机开发文档 IE 结构）。
+    /// CarPlay TLV 载荷：element = id(1) + len(1) + value（车机开发文档 IE 结构）。
+    /// 只保留配对 flag 与能力掩码，把 AD 包压进 31 字节；设备 MAC 由 GATT 读响应回。
     private func carPlayTLV() -> Data {
-        var tlv = Data()
-        // 配对 flag：已声明 CarPlay + iAP2
-        tlv.append(contentsOf: [0x01, 0x01, 0x03])
-        // 能力掩码：CarPlay=0x01 | iAP2=0x02 | H.265=0x04 | 音频=0x08
-        let capability: UInt16 = 0x000F
-        tlv.append(0x02); tlv.append(0x02)
-        tlv.append(UInt8(capability & 0xFF)); tlv.append(UInt8(capability >> 8))
-        // 设备 MAC（与 Bonjour TXT 的 deviceid 一致）
-        let mac: [UInt8] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
-        tlv.append(0x03); tlv.append(UInt8(mac.count))
-        tlv.append(contentsOf: mac)
-        return tlv
+        Data([
+            0x01, 0x01, 0x03,        // 配对 flag：已声明 CarPlay + iAP2
+            0x02, 0x02, 0x0F, 0x00,  // 能力掩码：CarPlay|iAP2|H.265|音频
+        ])
     }
 
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
