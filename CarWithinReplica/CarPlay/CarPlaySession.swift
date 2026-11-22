@@ -497,7 +497,7 @@ enum ACCBridge {
 }
 
 /// 本机配件身份。用 P-256 自签，不依赖 MFi 协处理器。
-struct AccessoryIdentity {
+struct PairingIdentity {
     let privateKey: P256.Signing.PrivateKey
     let name: String
     let model: String
@@ -505,7 +505,7 @@ struct AccessoryIdentity {
 
     var publicKeyData: Data { privateKey.publicKey.x963Representation }
 
-    static func load() -> AccessoryIdentity {
+    static func load() -> PairingIdentity {
         let defaults = UserDefaults.standard
         let key = "carplay.identity.private"
         let privateKey: P256.Signing.PrivateKey
@@ -517,7 +517,7 @@ struct AccessoryIdentity {
             defaults.set(created.rawRepresentation, forKey: key)
             privateKey = created
         }
-        return AccessoryIdentity(privateKey: privateKey,
+        return PairingIdentity(privateKey: privateKey,
                                  name: "CarWithin",
                                  model: "CarWithin-Replica",
                                  manufacturer: "CarWithin")
@@ -581,7 +581,8 @@ final class CarPlaySession {
     var onTouchRequest: (() -> Data)?
 
     private let queue = DispatchQueue(label: "carwithin.carplay")
-    private let identity = AccessoryIdentity.load()
+    private let identity = PairingIdentity.load()
+    private let probe = SameDeviceProbe()
     private var controlListener: NWListener?
     private var dataListener: NWListener?
     private var controlConnections: [ObjectIdentifier: NWConnection] = [:]
@@ -634,9 +635,17 @@ final class CarPlaySession {
 
         MFIIdentity.shared.load().forEach { onLog?("[MFI] " + $0) }
         onLog?("[MFI] 状态：" + (MFIIdentity.shared.isReady ? "就绪" : "未就绪"))
-        onLog?("[iAP2] " + IAP2Authentication.selfTest())
-        if let certificate = IAP2Authentication.certificateMessage() {
-            onLog?("[iAP2] 0xAA01 证书消息已构造（\(certificate.encoded().count)B）")
+        if let chain = MFIIdentity.shared.certificateChain {
+            onLog?("[iAP2] 0xAA01 证书链 \(chain.count)B 已就绪")
+        } else {
+            onLog?("[iAP2] 0xAA01 证书链缺失（certificate.p7b 未加载，0xAA00 将无法应答）")
+        }
+        // 用固定 32 字节挑战做一次 RFC4754 签名自检，确认私钥真能用。
+        let selfTestChallenge = Data(repeating: 0x5A, count: 32)
+        if let signature = try? MFIIdentity.shared.sign(challenge: selfTestChallenge) {
+            onLog?("[iAP2] 签名自检通过（RFC4754，\(signature.count)B）")
+        } else {
+            onLog?("[iAP2] 签名自检失败（私钥不可用）")
         }
 
         // 自建端点：Bonjour 广播 + RTSP 控制 + 视频通道，等 iOS 的 CarPlay 栈接入。
@@ -646,11 +655,20 @@ final class CarPlaySession {
         CarPlayConfiguration.summary().forEach { onLog?("[配置] " + $0) }
         onLog?("[iAP2] " + IAP2Configuration.summary())
 
-        // 直连配件端点：照原版 DirectAccessoryTransport（transportType=2）建本机配件端点。
+        // 直连配件端：照原版 SameDeviceProbe 编排完整 iAP2 状态机
+        // （transport → presence → 0x1D00/0xAA00/0xAA02/0x4300 逐条应答）。
         DiagnosticsLog.shared.rotateIfNeeded()
-        DirectAccessoryTransport.shared.onLog = { [weak self] message in self?.onLog?(message) }
-        _ = DirectAccessoryTransport.shared.start(
-            identifier: CarPlayConfiguration.vehicleName, transportType: 2)
+        probe.onLog = { [weak self] message in self?.onLog?(message) }
+        probe.onStage = { [weak self] message in self?.onLog?("[阶段] " + message) }
+        probe.onFinished = { [weak self] message in self?.onLog?("[结束] " + message) }
+        // 0x4301 里要告诉 iPhone 去哪连 RTSP —— 用 CarPlayReceiver 实际监听的 7000，
+        // 不是本类自建控制通道的 52700。
+        let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
+        probe.sessionEndpoint = (address: host, port: 7000, wifi: nil)
+        onLog?("[探测] 会话地址 \(host):7000（RTSP）")
+        probe.start(name: CarPlayConfiguration.vehicleName,
+                    identity: AccessoryIdentity.shared,
+                    transportType: 2)
 
         CarPlayReceiver.shared.onLog = { [weak self] message in self?.onLog?(message) }
         CarPlayReceiver.shared.start()
@@ -660,7 +678,7 @@ final class CarPlaySession {
     }
 
     func stop() {
-        DirectAccessoryTransport.shared.stop()
+        probe.stop()
         SessionWatchdog.shared.stop()
         CarPlayReceiver.shared.stop()
         DirectTransport.shared.stop()
@@ -695,9 +713,7 @@ final class CarPlaySession {
         while let packet = directParser.next() {
             onLog?("← 直连 control=0x\(String(packet.control, radix: 16)) \(packet.payload.count)B")
             if packet.control == 0xFF {
-                let reply = IAP2Packet(control: 0x02, session: 0,
-                                       sequence: nextSequence(),
-                                       acknowledgement: packet.sequence)
+                let reply = IAP2Packet(control: 0x02, sequence: nextSequence(), acknowledgement: packet.sequence, session: 0)
                 DirectTransport.shared.send(reply.encoded())
                 onLog?("→ 直连 presence 应答")
             }
@@ -771,13 +787,12 @@ final class CarPlaySession {
                 IAP2Parameter(id: 2, value: Data(identity.manufacturer.utf8) + Data([0])),
                 IAP2Parameter(id: 3, value: identity.publicKeyData),
             ])
-            send(IAP2Packet(control: 0x02, session: 0,
-                            sequence: nextSequence(), acknowledgement: packet.sequence,
+            send(IAP2Packet(control: 0x02, sequence: nextSequence(), acknowledgement: packet.sequence, session: 0,
                             payload: info.encoded()), on: connection)
             return
         }
 
-        guard let message = IAP2Message.decode(packet.payload) else {
+        guard let message = IAP2Message.parse(packet.payload) else {
             onLog?("收到未知包 control=0x\(String(packet.control, radix: 16)) len=\(packet.payload.count)")
             return
         }
@@ -788,18 +803,16 @@ final class CarPlaySession {
             let signature = identity.sign(challenge) ?? Data()
             let response = IAP2Message(id: IAP2MessageID.requestAuthenticationSignature,
                                        parameters: [IAP2Parameter(id: 0, value: signature)])
-            send(IAP2Packet(control: 0x02, session: packet.session,
-                            sequence: nextSequence(), acknowledgement: packet.sequence,
+            send(IAP2Packet(control: 0x02, sequence: nextSequence(), acknowledgement: packet.sequence, session: packet.session,
                             payload: response.encoded()), on: connection)
             onLog?("已回签鉴权挑战（\(challenge.count) 字节）")
 
         case IAP2MessageID.startSession:
             state = .authenticated
-            let ack = IAP2Message(id: IAP2MessageID.authStatus, parameters: [
+            let ack = IAP2Message(id: IAP2MessageID.authenticationSignature, parameters: [
                 IAP2Parameter(id: 0, value: Data([0x00])),
             ])
-            send(IAP2Packet(control: 0x02, session: packet.session,
-                            sequence: nextSequence(), acknowledgement: packet.sequence,
+            send(IAP2Packet(control: 0x02, sequence: nextSequence(), acknowledgement: packet.sequence, session: packet.session,
                             payload: ack.encoded()), on: connection)
             state = .running
             onLog?("会话已建立（session=\(packet.session)）")
@@ -808,11 +821,10 @@ final class CarPlaySession {
             state = .authenticated
             onLog?("对端结束会话")
 
-        case IAP2MessageID.requestAuthenticationCert:
-            let cert = IAP2Message(id: IAP2MessageID.requestAuthenticationCert,
+        case IAP2MessageID.authenticationCertificate:
+            let cert = IAP2Message(id: IAP2MessageID.authenticationCertificate,
                                    parameters: [IAP2Parameter(id: 0, value: identity.publicKeyData)])
-            send(IAP2Packet(control: 0x02, session: packet.session,
-                            sequence: nextSequence(), acknowledgement: packet.sequence,
+            send(IAP2Packet(control: 0x02, sequence: nextSequence(), acknowledgement: packet.sequence, session: packet.session,
                             payload: cert.encoded()), on: connection)
 
         default:
@@ -836,8 +848,7 @@ final class CarPlaySession {
         let message = IAP2Message(id: 0xE100, parameters: [
             IAP2Parameter(id: 0, value: touch.payload()),
         ])
-        send(IAP2Packet(control: 0x02, session: 0,
-                        sequence: nextSequence(), acknowledgement: 0,
+        send(IAP2Packet(control: 0x02, sequence: nextSequence(), acknowledgement: 0, session: 0,
                         payload: message.encoded()), on: connection)
     }
 }

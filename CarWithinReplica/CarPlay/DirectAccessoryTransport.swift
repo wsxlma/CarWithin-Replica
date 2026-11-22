@@ -1,223 +1,233 @@
 import Foundation
 
-/// 直连配件传输：照原版 `DirectAccessoryTransport` 的接口自己实现。
+/// 直连配件传输 —— 逐行照原版 `DirectAccessoryTransport`（ObjC）反编译重写
+/// （`analysis/acc.c`，地址 0x100004000 起）。
 ///
-/// 原版这个类就在它 App 二进制里（`_OBJC_CLASS_$_DirectAccessoryTransport`
-/// 带完整方法/属性表），是对 ACCTransportClient 的封装：
-///   client / connection / endpoint / generation
-///   - startWithIdentifier:transportType:error:   （原版用 transportType=2）
-///   - sendData:error:
-///   - stop
-///   @property (copy) void (^onData)(NSData *)
-///
-/// 关键：它不是系统私有框架的类，所以之前 dlopen 查找必然落空。
-/// 这里照同样的调用序列自己建端点：createConnection → createEndpoint，
-/// 并把 transportType/protocol/publish/identifier 的组合全试一遍，
-/// 直到 createEndpoint 返回非 nil——那组参数就是原版用的。
+/// 原版真实行为（与之前手写的版本差异极大）：
+/// 1. `transportType` **只接受 2 或 8**，其余直接报错。
+/// 2. `createConnectionWithType:andIdentifier:` 的 identifier 传的是 **self（transport 对象）**，
+///    不是配件名字符串；先试 type=2，失败回退 type=1。
+/// 3. `createEndpoint...` 的 `protocol` 恒为 **4**，`identifier` 恒为 **nil**，
+///    `publishConnection` 恒为 **YES**，transportType 用入参。
+/// 4. dataOutHandler 是三参数 block `(NSString, NSString, NSData)`；
+///    数据长度 > 0x10000 直接丢弃；拷贝后派发到 **主队列**，
+///    并用 `generation`（NSUUID）校验，避免旧连接的回调串进来。
+/// 5. `sendData:error:` 走 `processIncomingData:forEndpointWithUUID:`。
+/// 6. `stop` 先清 generation，再 destroy endpoint / connection（都带 HasMethod 检查）。
 final class DirectAccessoryTransport: NSObject {
     static let shared = DirectAccessoryTransport()
 
-    /// 收到系统送来的数据（对应原版 onData）。
     var onData: ((Data) -> Void)?
     var onLog: ((String) -> Void)?
 
     private(set) var client: AnyObject?
-    private(set) var connectionUUID: String?
-    private(set) var endpointUUID: String?
-    private(set) var generation = 0
-    private var started = false
-    private var parser = IAP2Parser()
+    private(set) var connection: String?
+    private(set) var endpoint: String?
+    private(set) var generation: UUID?
 
     private override init() { super.init() }
 
-    // MARK: - 对外接口（与原版同名同参）
+    var isOpen: Bool { endpoint != nil }
+
+    // MARK: - 启动
 
     @discardableResult
-    func start(identifier: String, transportType: Int32 = 2) -> Bool {
+    func start(identifier: String, transportType: Int = 2) -> Bool {
         stop()
-        generation += 1
+
+        guard transportType == 2 || transportType == 8 else {
+            onLog?("[直连] transportType=\(transportType) 不被原版接受（只允许 2 或 8）")
+            return false
+        }
 
         guard let client = ACCBridge.sharedTransportClient() else {
-            onLog?("[直连] ACCTransportClient 不可用")
+            onLog?("[直连] ACCTransportClient 不可用（CoreAccessories 未加载或系统不支持）")
             return false
         }
         self.client = client
 
-        // 1) 建连接（原版日志里 type=0 返回 nil，type=1 成功）
-        var connectionUUID: String?
-        for type: Int32 in [1, 0, 2] {
-            if let uuid = ACCBridge.createConnection(type: type, identifier: identifier) {
-                connectionUUID = uuid
-                onLog?("[直连] createConnection(type=\(type)) → \(uuid)")
-                break
+        let requiredMethods: [(String, Int)] = [
+            ("createConnectionWithType:andIdentifier:", 2),
+            ("createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:", 6),
+            ("processIncomingData:forEndpointWithUUID:", 2),
+            ("destroyEndpointWithUUID:", 1),
+            ("destroyConnectionWithUUID:", 1)
+        ]
+        for (name, count) in requiredMethods {
+            guard ACCBridge.hasMethod(client, name, argumentCount: count) else {
+                onLog?("[直连] ACC 缺少方法 \(name)（或参数个数不是 \(count)）")
+                stop()
+                return false
             }
         }
-        guard let connectionUUID else {
-            onLog?("[直连] createConnection 全部失败")
+        onLog?("[直连] ACC 五个 transport 方法齐备")
+
+        // 原版：identifier 传 self，不是配件名。
+        var connection = ACCBridge.createConnection(client, type: 2, identifier: self)
+        if let value = connection {
+            onLog?("[直连] createConnection(type=2) → \(value)")
+        } else {
+            onLog?("[直连] createConnection(type=2) 返回 nil，回退 type=1")
+            connection = ACCBridge.createConnection(client, type: 1, identifier: self)
+            if let value = connection {
+                onLog?("[直连] createConnection(type=1) → \(value)")
+            }
+        }
+
+        guard let connectionUUID = connection else {
+            onLog?("[直连] CoreAccessories 拒绝建立连接（此签名 App 可能缺少私有 transport 权限）")
+            stop()
             return false
         }
-        self.connectionUUID = connectionUUID
+        self.connection = connectionUUID
+        let currentGeneration = UUID()
+        generation = currentGeneration
+        onLog?("[直连] connection=\(connectionUUID) generation=\(currentGeneration.uuidString.prefix(8))")
 
-        // 2) 建端点。参数组合已在真机上验证（2.3.6 首次成功）：
-        //    transport=2 protocol=0 publish=false identifier=配件名（不是 connection UUID）。
-        guard let endpoint = ACCBridge.createEndpoint(
-            transportType: transportType,
-            protocolType: 0,
-            identifier: identifier,
-            connectionUUID: connectionUUID,
-            publishConnection: false,
-            onData: { [weak self] data in
-                self?.receive(data)
-            }) else {
-            onLog?("[直连] createEndpoint 失败（transport=\(transportType) protocol=0）")
+        // dataOutHandler：三参数，长度上限 0x10000，拷贝后回主队列，校验 generation。
+        let handler: @convention(block) (AnyObject?, AnyObject?, AnyObject?) -> Void = {
+            [weak self] _, _, payload in
+            guard let self else { return }
+            guard let data = payload as? NSData else {
+                self.onLog?("[直连] dataOutHandler 第三参数不是 NSData（实际 \(type(of: payload as Any))）")
+                return
+            }
+            guard data.length <= 0x10000 else {
+                self.onLog?("[直连] 丢弃超长数据 \(data.length)B（上限 65536）")
+                return
+            }
+            let copy = Data(referencing: data)
+            DispatchQueue.main.async {
+                guard self.generation == currentGeneration else {
+                    self.onLog?("[直连] 丢弃旧 generation 的回调 \(copy.count)B")
+                    return
+                }
+                self.onData?(copy)
+            }
+        }
+
+        guard let endpointUUID = ACCBridge.createEndpoint(client,
+                                                          transportType: transportType,
+                                                          protocolType: 4,
+                                                          identifier: nil,
+                                                          dataOutHandler: handler,
+                                                          connectionUUID: connectionUUID,
+                                                          publishConnection: true) else {
+            onLog?("[直连] CoreAccessories 拒绝发布 iAP2 端点（type=\(transportType) protocol=4 publish=YES）")
+            stop()
             return false
         }
-        endpointUUID = endpoint
-        onLog?("[直连] createEndpoint 成功 → \(endpoint)")
-
-        // 另注册一次数据回调（ACC 的字典属性），双保险。
-        // dataOutHandler 真实签名是三参数：(connectionUUID, endpointUUID, data)。
-        // 之前声明双参数，第三参数（数据）被直接丢弃——所以一直"收不到"。
-        let handler: @convention(block) (AnyObject, AnyObject, AnyObject) -> Void = { [weak self] a, b, c in
-            self?.onLog?("[直连] dataOutHandler c=\(String(describing: c))")
-            if let d = c as? Data { self?.receive(d) }
-            else if let d = c as? NSData { self?.receive(Data(referencing: d)) }
-            else if let d = a as? Data { self?.receive(d) }
-            else if let d = b as? Data { self?.receive(d) }
-            else { self?.onLog?("[直连] dataOutHandler 第三参数不是 Data") }
-        }
-        _ = ACCBridge.setEndpointDataOutHandlers([endpoint: handler])
-        onLog?("[直连] 已注册 setEndpointDataOutHandlers")
-        onLog?("[直连] 参数组合：transport=\(transportType) protocol=0 publish=false identifier=\(identifier)")
-
-        // 收数据走 ACC delegate 的 receivedSecureTunnelData，不是 dataOutHandler。
-        ACCBridge.delegateRef?.onSecureData = { [weak self] data in
-            self?.receive(data)
-        }
-
-        // 3) 发布连接 + 标记认证状态（原版有 authenticated 跟踪，可能这是系统开口的开关）
-        let published = ACCBridge.publishConnection(uuid: connectionUUID)
-        onLog?("[直连] publishConnection → \(published)")
-        let authed = ACCBridge.setConnectionAuthenticated(uuid: connectionUUID, state: true)
-        onLog?("[直连] setConnectionAuthenticated(true) → \(authed)")
-
-        started = true
-        onLog?("[直连] 本机配件端点已就绪（identifier=\(identifier), transportType=\(transportType)）")
-
-        // 原版流程：端点建好后发一个「iAP2 在线探测」，等 iOS 服务回应，
-        // 之后系统会主动发 0xAA00/0x1D00/0x4300，我们逐条回（见 receive）。
-        sendProbe()
+        self.endpoint = endpointUUID
+        onLog?("[直连] endpoint=\(endpointUUID)（type=\(transportType) protocol=4 publish=YES）")
+        onLog?("[直连] 直连配件通道已建立，等待 iOS 侧 iAP2 交互")
         return true
     }
 
-    /// iAP2 在线探测：连发几种链路层 control（0x00/0x04/0x08/0xFF），
-    /// 总有一个是 iOS 服务认的 Link Sync。
-    private func sendProbe() {
-        for control: UInt8 in [0x00, 0x04, 0x08, 0xFF] {
-            let packet = IAP2Packet(control: control, session: 0, sequence: 0, acknowledgement: 0)
-            sendBoth(packet.encoded())
-            onLog?("[直连] → 在线探测 control=0x\(String(control, radix: 16))")
-        }
-    }
-
-    /// 两个方向都发一次，看哪个被系统认。
-    private func sendBoth(_ data: Data) {
-        guard let endpointUUID else { return }
-        let okIn = ACCBridge.processIncomingData(data, endpointUUID: endpointUUID)
-        _ = ACCBridge.sendOutgoingData(data, endpointUUID: endpointUUID,
-                                       connectionUUID: connectionUUID ?? "")
-        onLog?("[直连] 发送 \(data.count)B：processIncoming=\(okIn)")
-    }
-
-    /// 收到系统送来的字节流：切出 iAP2 封包，按认证流程回话。
-    /// 按原版日志的完整 iAP2 流程逐条响应：
-    ///   0xAA00→0xAA01 证书、0xAA02→0xAA03 签名、0xAA05 认证通过
-    ///   0x1D00→0x1D01 识别信息、0x1D02 识别通过
-    ///   0x4300→0x4301 请求启动 CarPlay（带本机地址），随后 iOS 连入 7000
-    private func receive(_ data: Data) {
-        onLog?("[直连] ← 收到配件数据 \(data.count)B")
-        parser.append(data)
-        while let packet = parser.next() {
-            onLog?("[直连] iAP2 control=0x\(String(packet.control, radix: 16)) \(packet.payload.count)B")
-            onData?(packet.payload)
-
-            if packet.control & 0x02 == 0 {
-                var reply = IAP2Packet.presence
-                reply.session = packet.session
-                send(reply.encoded())
-                onLog?("[直连] → 回送 presence")
-                continue
-            }
-            guard packet.payload.count >= 2 else { continue }
-            let start = packet.payload.startIndex
-            let messageID = (UInt16(packet.payload[start]) << 8) | UInt16(packet.payload[start + 1])
-            onLog?("[直连] ← iAP2 消息 0x\(String(messageID, radix: 16))")
-
-            switch messageID {
-            case IAP2MessageID.requestAuthentication:            // 0xAA00
-                if let cert = IAP2Authentication.certificateMessage() {
-                    send(encode(cert, packet: packet))
-                    onLog?("[直连] → 回送 MFi 证书链 0xAA01")
-                }
-            case IAP2MessageID.requestAuthenticationSignature:   // 0xAA02
-                let challenge = packet.payload.count > 4 ? Data(packet.payload[(start + 4)...]) : Data()
-                if let resp = IAP2Authentication.responseMessage(challenge: challenge) {
-                    send(encode(resp, packet: packet))
-                    onLog?("[直连] → 回送 MFi 签名 0xAA03")
-                }
-            case IAP2MessageID.accessoryAuthAccepted:            // 0xAA05
-                onLog?("[直连] ← iOS 已接受配件认证")
-            case IAP2MessageID.requestIdentification:            // 0x1D00
-                let ident = AccessoryMessages.identification(
-                    name: CarPlayConfiguration.vehicleName,
-                    deviceID: AccessoryMessages.deviceID)
-                send(encode(ident, packet: packet))
-                onLog?("[直连] → 回送识别信息 0x1D01")
-            case IAP2MessageID.identificationAccepted:           // 0x1D02
-                onLog?("[直连] ← iOS 已接受配件识别，等待 CarPlay 可用通知")
-            case IAP2MessageID.carPlayAvailable:                 // 0x4300
-                let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
-                let start = AccessoryMessages.startSession(
-                    address: host, port: 7000,
-                    deviceID: AccessoryMessages.deviceID, wifi: nil)
-                send(encode(start, packet: packet))
-                onLog?("[直连] → 回送 0x4301 请求在 \(host):7000 启动 CarPlay")
-            default:
-                break
-            }
-        }
-    }
-
-    private func encode(_ message: IAP2Message, packet: IAP2Packet?) -> Data {
-        if let packet {
-            return IAP2Packet(control: 0x02, session: packet.session,
-                              sequence: packet.sequence,
-                              acknowledgement: packet.acknowledgement,
-                              payload: message.encoded()).encoded()
-        }
-        return IAP2Packet(control: 0x02, session: 0, sequence: 0,
-                          acknowledgement: 0,
-                          payload: message.encoded()).encoded()
-    }
+    // MARK: - 发送
 
     @discardableResult
     func sendData(_ data: Data) -> Bool {
-        guard started, let endpointUUID, let connectionUUID else { return false }
-        return ACCBridge.sendOutgoingData(data,
-                                         endpointUUID: endpointUUID,
-                                         connectionUUID: connectionUUID)
+        guard let client, let endpoint else {
+            onLog?("[直连] sendData 失败：直连通道未打开")
+            return false
+        }
+        let ok = ACCBridge.processIncomingData(client, data: data, endpointUUID: endpoint)
+        onLog?("[直连] → 发送 \(data.count)B（processIncomingData=\(ok)）")
+        return ok
     }
 
-    private func send(_ data: Data) {
-        sendBoth(data)
-    }
+    // MARK: - 停止
 
     func stop() {
-        // 不调用 destroyEndpoint/destroyConnection：ACC 在状态不对时会抛 ObjC 异常
-        // （真机崩溃栈：手势处理 → rethrow → abort）。只解除引用，让系统自己回收。
+        generation = nil
+        if let client, let endpoint {
+            _ = ACCBridge.destroyEndpoint(client, uuid: endpoint)
+        }
+        if let client, let connection {
+            _ = ACCBridge.destroyConnection(client, uuid: connection)
+        }
+        endpoint = nil
+        connection = nil
         client = nil
-        endpointUUID = nil
-        connectionUUID = nil
-        started = false
+    }
+
+    deinit {
+        stop()
+    }
+}
+
+// MARK: - 照原版 `HasMethod` 与各 objc_msgSend 调用的底层封装
+
+extension ACCBridge {
+    /// 原版 `HasMethod(target, sel, argCount)`：方法存在且参数个数为 argCount + 2（self、_cmd）。
+    static func hasMethod(_ target: AnyObject, _ name: String, argumentCount: Int) -> Bool {
+        let selector = NSSelectorFromString(name)
+        guard let cls = object_getClass(target),
+              let method = class_getInstanceMethod(cls, selector) else {
+            return false
+        }
+        return Int(method_getNumberOfArguments(method)) == argumentCount + 2
+    }
+
+    /// `createConnectionWithType:andIdentifier:`，identifier 传对象（原版传 self）。
+    static func createConnection(_ client: AnyObject, type: Int, identifier: AnyObject) -> String? {
+        let selector = NSSelectorFromString("createConnectionWithType:andIdentifier:")
+        guard let cls = object_getClass(client),
+              let imp = class_getMethodImplementation(cls, selector) else { return nil }
+        typealias Fn = @convention(c) (AnyObject, Selector, Int, AnyObject) -> AnyObject?
+        guard let created = unsafeBitCast(imp, to: Fn.self)(client, selector, type, identifier) else {
+            return nil
+        }
+        return created as? String
+    }
+
+    /// `createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:`
+    static func createEndpoint(_ client: AnyObject,
+                               transportType: Int,
+                               protocolType: Int,
+                               identifier: AnyObject?,
+                               dataOutHandler: AnyObject,
+                               connectionUUID: String,
+                               publishConnection: Bool) -> String? {
+        let selector = NSSelectorFromString(
+            "createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:")
+        guard let cls = object_getClass(client),
+              let imp = class_getMethodImplementation(cls, selector) else { return nil }
+        typealias Fn = @convention(c) (AnyObject, Selector, Int, Int, AnyObject?,
+                                       AnyObject, AnyObject, Bool) -> AnyObject?
+        guard let created = unsafeBitCast(imp, to: Fn.self)(client, selector,
+                                                            transportType, protocolType,
+                                                            identifier, dataOutHandler,
+                                                            connectionUUID as NSString,
+                                                            publishConnection) else {
+            return nil
+        }
+        return created as? String
+    }
+
+    /// `processIncomingData:forEndpointWithUUID:` —— 配件 → 系统方向。
+    static func processIncomingData(_ client: AnyObject, data: Data, endpointUUID: String) -> Bool {
+        let selector = NSSelectorFromString("processIncomingData:forEndpointWithUUID:")
+        guard let cls = object_getClass(client),
+              let imp = class_getMethodImplementation(cls, selector) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, AnyObject, AnyObject) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, selector,
+                                              data as NSData, endpointUUID as NSString)
+    }
+
+    static func destroyEndpoint(_ client: AnyObject, uuid: String) -> Bool {
+        let selector = NSSelectorFromString("destroyEndpointWithUUID:")
+        guard let cls = object_getClass(client),
+              let imp = class_getMethodImplementation(cls, selector) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, selector, uuid as NSString)
+    }
+
+    static func destroyConnection(_ client: AnyObject, uuid: String) -> Bool {
+        let selector = NSSelectorFromString("destroyConnectionWithUUID:")
+        guard let cls = object_getClass(client),
+              let imp = class_getMethodImplementation(cls, selector) else { return false }
+        typealias Fn = @convention(c) (AnyObject, Selector, AnyObject) -> Bool
+        return unsafeBitCast(imp, to: Fn.self)(client, selector, uuid as NSString)
     }
 }

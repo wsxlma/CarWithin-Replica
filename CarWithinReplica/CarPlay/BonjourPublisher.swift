@@ -32,15 +32,12 @@ final class BonjourPublisher: NSObject, NetServiceDelegate {
         let serviceName = name ?? CarPlayConfiguration.vehicleName
         let txt = CarPlayConfiguration.txtRecord(pairingKey: pairingKey.publicKey.rawRepresentation)
 
-        // 服务类型同时覆盖两条路：标准无线 CarPlay 用 _carplay._tcp，
-        // 原版走的是 AirPlay 协议（pair-setup→pair-verify→auth-setup→SETUP→RECORD），
-        // 所以 _airplay._tcp 也要发。其余两个是原版 Info.plist 声明的自定义类型。
+        // 严格照原版 Info.plist 的三条服务类型（原版**没有** _carplay._tcp，
+        // 也没有 _apple-mobdev2._tcp）。之前多发的两个既无依据又容易引发注册冲突。
         let types = [
-            "_carplay._tcp.",
             "_airplay._tcp.",
-            "_carplay-ctrl._tcp.",
             "_tds-carkit._tcp.",
-            "_apple-mobdev2._tcp.",
+            "_carplay-ctrl._tcp.",
         ]
         for type in types {
             let service = NetService(domain: "local.", type: type, name: serviceName, port: port)

@@ -8,8 +8,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "2.5.1"
-    CURRENT_PROJECT_VERSION: "53"
+    MARKETING_VERSION: "2.6.0"
+    CURRENT_PROJECT_VERSION: "54"
     SWIFT_VERSION: "5.9"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     CODE_SIGN_STYLE: Manual
@@ -50,18 +50,12 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSLocalNetworkUsageDescription: CarWithin 需要访问本地网络，以接收 CarPlay 音视频，并在你选择时把画面或声音发送给局域网接收设备。
         NSBonjourServices:
-          - _carplay._tcp
-          - _carplay._tcp.
           - _airplay._tcp
           - _airplay._tcp.
-          - _carplay-ctrl._tcp
-          - _carplay-ctrl._tcp.
           - _tds-carkit._tcp
           - _tds-carkit._tcp.
-          - _apple-mobdev2._tcp
-          - _apple-mobdev2._tcp.
-          - _carwithin._tcp
-          - _carwithin._tcp.
+          - _carplay-ctrl._tcp
+          - _carplay-ctrl._tcp.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSBluetoothAlwaysUsageDescription: CarWithin 需要使用蓝牙来发现并连接 CarPlay 设备。
@@ -69,5 +63,4 @@ targets:
         NSLocationWhenInUseUsageDescription: CarWithin 仅使用定位权限读取当前 Wi-Fi 名称，不会收集位置坐标。
         UIBackgroundModes:
           - audio
-          - bluetooth-peripheral
         ITSAppUsesNonExemptEncryption: false
