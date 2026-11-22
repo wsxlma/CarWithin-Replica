@@ -135,7 +135,7 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
-                           didReceiveWriteRequests requests: [CBATTRequest]) {
+                           didReceiveWrite requests: [CBATTRequest]) {
         for request in requests {
             if let value = request.value {
                 onLog?("[BLE] 收到写入 \(value.count)B")
@@ -205,12 +205,33 @@ final class BLEBootstrap: NSObject, CBPeripheralManagerDelegate {
                     onLog?("[BLE] → 已回送 MFi 签名")
                 }
             } else if messageID == IAP2MessageID.startIDPS {
+                // 识别：先声明「我是一台 CarPlay 车机」，iPhone 收到后才可能弹配对框。
+                let ident = AccessoryMessages.identification(
+                    name: CarPlayConfiguration.vehicleName,
+                    deviceID: AccessoryMessages.deviceID)
+                send(IAP2Packet(control: 0x02, session: packet.session,
+                                sequence: packet.sequence,
+                                acknowledgement: packet.acknowledgement,
+                                payload: ident.encoded()), peripheral: peripheral)
+                onLog?("[BLE] → 已回送 identification（声明 CarPlay 车机）")
+
                 let config = IAP2Configuration.message()
                 send(IAP2Packet(control: 0x02, session: packet.session,
                                 sequence: packet.sequence,
                                 acknowledgement: packet.acknowledgement,
                                 payload: config.encoded()), peripheral: peripheral)
                 onLog?("[BLE] → 已回送车机配置 0x1D00")
+            } else if messageID == IAP2MessageID.authStatus {
+                // 认证通过后把 RTSP 地址递给 iPhone，让它连进来。
+                let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
+                let session = AccessoryMessages.startSession(
+                    address: host, port: 7000,
+                    deviceID: AccessoryMessages.deviceID, wifi: nil)
+                send(IAP2Packet(control: 0x02, session: packet.session,
+                                sequence: packet.sequence,
+                                acknowledgement: packet.acknowledgement,
+                                payload: session.encoded()), peripheral: peripheral)
+                onLog?("[BLE] → 已回送 startSession（\(host):7000）")
             }
         }
     }
