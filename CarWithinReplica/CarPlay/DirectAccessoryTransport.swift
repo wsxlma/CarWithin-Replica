@@ -58,41 +58,23 @@ final class DirectAccessoryTransport: NSObject {
         }
         self.connectionUUID = connectionUUID
 
-        // 2) 建端点：把 transportType / protocol / publish / identifier 的组合全试一遍。
-        //    原版日志明确写「传输类型 2」，所以 2 排在最前。
-        var found: String?
-        let transportTypes: [Int32] = [transportType, 2, 1, 0, 3, 4]
-        let protocols: [Int32] = Array(0...10) + [4, 16, 17]
-        let identifiers = [identifier, connectionUUID]
-
-        outer: for tt in transportTypes {
-            for proto in protocols {
-                for publish in [false, true] {
-                    for ident in identifiers {
-                        if let endpoint = ACCBridge.createEndpoint(
-                            transportType: tt,
-                            protocolType: proto,
-                            identifier: ident,
-                            connectionUUID: connectionUUID,
-                            publishConnection: publish,
-                            onData: { [weak self] data in
-                                self?.receive(data)
-                            }) {
-                            endpointUUID = endpoint
-                            found = "transport=\(tt) protocol=\(proto) publish=\(publish) identifier=\(ident)"
-                            onLog?("[直连] createEndpoint 成功 → \(endpoint)")
-                            onLog?("[直连] 参数组合：\(found!)")
-                            break outer
-                        }
-                    }
-                }
-            }
-        }
-
-        guard found != nil else {
-            onLog?("[直连] createEndpoint 全部组合均返回 nil（transportType=\(transportType)）")
+        // 2) 建端点。参数组合已在真机上验证（2.3.6 首次成功）：
+        //    transport=2 protocol=0 publish=false identifier=配件名（不是 connection UUID）。
+        guard let endpoint = ACCBridge.createEndpoint(
+            transportType: transportType,
+            protocolType: 0,
+            identifier: identifier,
+            connectionUUID: connectionUUID,
+            publishConnection: false,
+            onData: { [weak self] data in
+                self?.receive(data)
+            }) else {
+            onLog?("[直连] createEndpoint 失败（transport=\(transportType) protocol=0）")
             return false
         }
+        endpointUUID = endpoint
+        onLog?("[直连] createEndpoint 成功 → \(endpoint)")
+        onLog?("[直连] 参数组合：transport=\(transportType) protocol=0 publish=false identifier=\(identifier)")
 
         // 3) 发布连接（原版这里也返回 false，但端点已建起来，不阻塞）
         let published = ACCBridge.publishConnection(uuid: connectionUUID)
@@ -100,7 +82,31 @@ final class DirectAccessoryTransport: NSObject {
 
         started = true
         onLog?("[直连] 本机配件端点已就绪（identifier=\(identifier), transportType=\(transportType)）")
+
+        // 端点一建好就主动声明身份——SameDeviceProbe 就是这么做的，
+        // 这一步才可能让 iOS 把我们认成 CarPlay 车机。
+        announceIdentity()
         return true
+    }
+
+    /// 主动向系统声明：我是一台 CarPlay 车机。
+    private func announceIdentity() {
+        let ident = AccessoryMessages.identification(
+            name: CarPlayConfiguration.vehicleName,
+            deviceID: AccessoryMessages.deviceID)
+        send(encode(ident, packet: nil))
+        onLog?("[直连] → 已主动发送 identification（声明 CarPlay 车机）")
+
+        let config = IAP2Configuration.message()
+        send(encode(config, packet: nil))
+        onLog?("[直连] → 已主动发送车机配置 0x1D00")
+
+        let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
+        let session = AccessoryMessages.startSession(
+            address: host, port: 7000,
+            deviceID: AccessoryMessages.deviceID, wifi: nil)
+        send(encode(session, packet: nil))
+        onLog?("[直连] → 已主动发送 startSession（\\(host):7000）")
     }
 
     /// 收到系统送来的字节流：切出 iAP2 封包，按认证流程回话。
@@ -151,11 +157,16 @@ final class DirectAccessoryTransport: NSObject {
         }
     }
 
-    private func encode(_ message: IAP2Message, packet: IAP2Packet) -> Data {
-        IAP2Packet(control: 0x02, session: packet.session,
-                   sequence: packet.sequence,
-                   acknowledgement: packet.acknowledgement,
-                   payload: message.encoded()).encoded()
+    private func encode(_ message: IAP2Message, packet: IAP2Packet?) -> Data {
+        if let packet {
+            return IAP2Packet(control: 0x02, session: packet.session,
+                              sequence: packet.sequence,
+                              acknowledgement: packet.acknowledgement,
+                              payload: message.encoded()).encoded()
+        }
+        return IAP2Packet(control: 0x02, session: 0, sequence: 0,
+                          acknowledgement: 0,
+                          payload: message.encoded()).encoded()
     }
 
     @discardableResult
