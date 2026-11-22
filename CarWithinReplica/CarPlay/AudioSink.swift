@@ -163,7 +163,7 @@ final class AudioSink {
 
     private func play(buffer: [UInt8], size: Int) {
         guard started, let format = AVAudioFormat(standardFormatWithSampleRate: destinationFormat.mSampleRate,
-                                                  channels: Int(destinationFormat.mChannelsPerFrame)) else { return }
+                                                  channels: AVAudioChannelCount(destinationFormat.mChannelsPerFrame)) else { return }
         let capacity = AVAudioFrameCount(size / Int(destinationFormat.mBytesPerFrame))
         guard capacity > 0,
               let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return }
@@ -199,12 +199,8 @@ private final class InputState {
     }
 }
 
-private func audioConverterInput(
-    _ converter: AudioConverterRef,
-    _ packets: UnsafeMutablePointer<UInt32>,
-    _ bufferList: UnsafeMutablePointer<AudioBufferList>,
-    _ description: UnsafeMutablePointer<AudioStreamPacketDescription>?,
-    _ userData: UnsafeMutableRawPointer?) -> OSStatus {
+private let audioConverterInput: AudioConverterComplexInputData = {
+    _, packets, bufferList, description, userData in
     guard let userData else { return -1 }
     let state = Unmanaged<InputState>.fromOpaque(userData).takeUnretainedValue()
     if state.sent {
