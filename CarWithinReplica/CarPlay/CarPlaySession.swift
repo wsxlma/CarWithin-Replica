@@ -115,6 +115,22 @@ enum ACCBridge {
             steps.append("launchServer 已调用")
         }
 
+        // launchServer 之后，服务连接可能才是建端点的前提
+        let serverSelector = NSSelectorFromString("serverConnection")
+        if let imp = class_getMethodImplementation(cls, serverSelector) {
+            typealias GetFn = @convention(c) (AnyObject, Selector) -> AnyObject?
+            let server = unsafeBitCast(imp, to: GetFn.self)(client, serverSelector)
+            steps.append("serverConnection → \(server.map { String(describing: $0) } ?? "nil")")
+            if let server {
+                let setSelector = NSSelectorFromString("setServerConnection:")
+                if let setIMP = class_getMethodImplementation(cls, setSelector) {
+                    typealias SetFn = @convention(c) (AnyObject, Selector, AnyObject?) -> Void
+                    unsafeBitCast(setIMP, to: SetFn.self)(client, setSelector, server)
+                    steps.append("setServerConnection 已调用")
+                }
+            }
+        }
+
         // createConnectionWithType:andIdentifier: (i, @)
         let connectionSelector = NSSelectorFromString("createConnectionWithType:andIdentifier:")
         guard let connectionIMP = class_getMethodImplementation(cls, connectionSelector) else {
