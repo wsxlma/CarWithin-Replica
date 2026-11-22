@@ -135,10 +135,10 @@ final class CarPlayVideoDecoder {
         let status = vps.withUnsafeBytes { vpsPtr in
             sps.withUnsafeBytes { spsPtr in
                 pps.withUnsafeBytes { ppsPtr in
-                    var pointers: [UnsafePointer<UInt8>?] = [
-                        vpsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                        spsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                        ppsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    var pointers: [UnsafePointer<UInt8>] = [
+                        vpsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                        spsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                        ppsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
                     ]
                     var sizes = [vps.count, sps.count, pps.count]
                     return CMVideoFormatDescriptionCreateFromHEVCParameterSets(
@@ -166,9 +166,9 @@ final class CarPlayVideoDecoder {
         var format: CMFormatDescription?
         let status = sps.withUnsafeBytes { spsPtr in
             pps.withUnsafeBytes { ppsPtr in
-                var pointers: [UnsafePointer<UInt8>?] = [
-                    spsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                    ppsPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                var pointers: [UnsafePointer<UInt8>] = [
+                    spsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                    ppsPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
                 ]
                 var sizes = [sps.count, pps.count]
                 return CMVideoFormatDescriptionCreateFromH264ParameterSets(
@@ -257,6 +257,7 @@ final class CarPlayVideoDecoder {
             sampleTimingArray: &timing,
             sampleSizeEntryCount: 1,
             sampleSizeArray: &sampleSize,
+            offsetToData: 0,
             sampleBufferOut: &sampleBuffer)
         guard blockStatus == noErr, let sampleBuffer else { return }
 
