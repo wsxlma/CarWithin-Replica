@@ -57,6 +57,7 @@ public class DecompileByName extends GhidraScript {
                         + (res == null ? "null result" : res.getErrorMessage()));
                 }
                 out.println();
+                out.flush();
             }
         } finally {
             ifc.dispose();

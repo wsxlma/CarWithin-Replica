@@ -364,6 +364,7 @@ final class CarPlaySession {
     private var parsers: [ObjectIdentifier: IAP2Parser] = [:]
     private var sequence: UInt8 = 0
     private var touch = TouchHID()
+    private var directParser = IAP2Parser()
     private var startAttempts = 0
 
     let controlPort: UInt16
@@ -407,9 +408,16 @@ final class CarPlaySession {
 
         let steps = ACCBridge.connect()
         steps.forEach { onLog?("[ACC] " + $0) }
+
+        // ACC 需要 accessories 权限，自签包拿不到；原版走的是 DirectAccessoryTransport。
+        let direct = DirectTransport.shared
+        direct.onLog = { [weak self] message in self?.onLog?("[直连] " + message) }
+        direct.onData = { [weak self] data in self?.consumeDirect(data) }
+        _ = direct.start()
     }
 
     func stop() {
+        DirectTransport.shared.stop()
         controlListener?.cancel(); controlListener = nil
         dataListener?.cancel(); dataListener = nil
         controlConnections.values.forEach { $0.cancel() }
@@ -433,6 +441,21 @@ final class CarPlaySession {
         }
         listener.start(queue: queue)
         return listener
+    }
+
+    /// 直连通道收到的字节按 iAP2 拆包。
+    private func consumeDirect(_ data: Data) {
+        directParser.append(data)
+        while let packet = directParser.next() {
+            onLog?("← 直连 control=0x\(String(packet.control, radix: 16)) \(packet.payload.count)B")
+            if packet.control == 0xFF {
+                let reply = IAP2Packet(control: 0x02, session: 0,
+                                       sequence: nextSequence(),
+                                       acknowledgement: packet.sequence)
+                DirectTransport.shared.send(reply.encoded())
+                onLog?("→ 直连 presence 应答")
+            }
+        }
     }
 
     // MARK: - 连接
