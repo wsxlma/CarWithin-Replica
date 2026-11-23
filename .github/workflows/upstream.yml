@@ -15,10 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 选择 Xcode
+      - name: 环境诊断
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.0.app || true
+          ls /Applications | grep -i xcode || true
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version || true
+          cd upstream
+          xcodebuild -project TDSCarKit.xcodeproj -target TDSCarKit -showBuildSettings 2>/dev/null \
+            | grep -E "SUPPORTED_PLATFORMS|PLATFORM_NAME|SDKROOT|SUPPORTS_MACCATALYST|ASSETCATALOG" || true
 
       - name: 编译上游工程
         run: |
