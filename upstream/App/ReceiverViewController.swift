@@ -171,7 +171,10 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     private lazy var pictureInPicture = CarPlayPictureInPicture(surface: videoSurface)
     private let keepAlive = BackgroundKeepAlive()
     private let keepAliveSwitch = UISwitch()
-    private let headUnitOutput = ChoiceMenu(items: ["浏览器", "CarLife", "AirPlay", "台铃 4.3 寸", "九号 5 寸", "极核 6.2 寸"])
+    /// 只保留浏览器 / CarLife / AirPlay / 九号。
+    /// 台铃与极核的适配已从界面移除；枚举值保留原样，避免牵连底层的分支判断。
+    private static let headUnitChoices: [HeadUnitOutput] = [.browser, .carLife, .airPlay, .ninebot]
+    private let headUnitOutput = ChoiceMenu(items: ["浏览器", "CarLife", "AirPlay", "九号 5 寸"])
     private enum HeadUnitOutput: Int {
         case browser, carLife, airPlay, tailing, ninebot, zeeho
         var usesInstrumentWiFi: Bool { self == .tailing || self == .ninebot || self == .zeeho }
@@ -195,7 +198,11 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             airPlayRoutePicker.accessibilityTraits.insert(.notEnabled)
         }
     }
-    private var outputMode: HeadUnitOutput { HeadUnitOutput(rawValue: headUnitOutput.selectedSegmentIndex) ?? .browser }
+    private var outputMode: HeadUnitOutput {
+        let index = headUnitOutput.selectedSegmentIndex
+        guard index >= 0, index < Self.headUnitChoices.count else { return .browser }
+        return Self.headUnitChoices[index]
+    }
     private let carLifeAddressField = UITextField()
     private let carLifeStatus = StatusLabel()
     private func updateCarLifeStatus(_ message: String) {
@@ -257,7 +264,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             let pages: [String: () -> UIViewController] = [
                 "display": displayPage, "screens": screensPage, "wifi": wifiPage, "presets": presetsPage,
                 "vehicle": vehiclePage, "sound": soundPage, "output": headUnitPage,
-                "tailing": { [unowned self] in self.headUnitOutput.selectedSegmentIndex = HeadUnitOutput.tailing.rawValue; self.refreshVideoOutputSummary(); return self.headUnitPage() },
+
                 "web": headUnitPage, "log": logPage, "lab": diagnosticsPage, "about": aboutPage,
                 "usage": usagePage, "updates": aboutPage, "https": httpsSettingsPage]
             if arguments.indices.contains(index + 1), let make = pages[arguments[index + 1]] {
@@ -2173,14 +2180,7 @@ extension ReceiverViewController {
                     .control("画中画开启时机", icon: ("pip.fill", .systemIndigo), pictureInPictureTiming)
                 ]),
                 SettingsSection("支持", [
-                    .externalLink("关注作者", icon: ("heart.fill", .systemRed), detail: "抖音") {
-                        UIApplication.shared.open(Self.authorURL)
-                    },
-                    .externalLink("请我喝杯咖啡", icon: ("cup.and.saucer.fill", .systemOrange), detail: "支付宝") {
-                        UIApplication.shared.open(Self.supportURL)
-                    },
-                    .page("诊断与实验", icon: ("stethoscope", .systemTeal)) { [unowned self] in self.diagnosticsPage() },
-                    .page("关于", icon: ("info.circle.fill", .systemGray)) { [unowned self] in self.aboutPage() }
+                    .page("诊断与实验", icon: ("stethoscope", .systemTeal)) { [unowned self] in self.diagnosticsPage() }
                 ])
             ]
         }
