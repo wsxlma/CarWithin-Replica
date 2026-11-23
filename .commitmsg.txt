@@ -1,0 +1,25 @@
+引入上游完整源码（AGPL-3.0）并改为直接编译，不再手工复刻
+
+作者公开了完整源码：https://github.com/xmz28/CarWithin （v1.0.3）
+
+对照源码后确认了此前失败的三个根因：
+
+1. 缺 iAP2 SYN 包。原版在 presence 之后 0.1 秒会补发
+   IAP2Packet(control:0x80, seq:0x10, ack:0, session:0,
+   payload: 01 05 08 00 07 D0 00 FA 03 03 01 00 01)
+   我们从来只发 presence，链路永远建不起来。
+
+2. 误判 presence 回包。原版 IAP2Parser 把 FF550200EE10 识别为 .presence 事件
+   （本机 iOS 服务已响应 iAP2 在线探测），我们把它当成本地回环直接丢弃了。
+
+3. ACC identifier 应为 deviceID（MAC 形式），且所有私有调用必须包在
+   ObjC @try/@catch 里。原版 DirectAccessoryTransport.m 全程 @try，
+   而 Swift 里 XPC 抛异常会直接 SIGABRT。
+
+既然有完整可编译工程，改为直接编译上游：
+- upstream/ 完整源码，78 个源文件全部在 pbxproj 里
+- 新增 .github/workflows/upstream.yml：xcodebuild + 打包 IPA
+- 仓库内不放任何证书/私钥（GitHub 公开仓库），证书走 App 内 Documents 导入
+- 保留上游 AGPL-3.0 许可证与第三方声明
+
+版本 1.0.3（上游）

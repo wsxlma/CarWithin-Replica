@@ -336,8 +336,13 @@ final class CarPlaySession {
         let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
         probe.sessionEndpoint = (address: host, port: 7000, wifi: nil)
         onLog?("[探测] 会话地址 \(host):7000（RTSP）")
-        // 原版只接受 2 或 8：先试 2（Bluetooth Classic），1.5s 内只收到回环就换 8。
-        probe.start(name: CarPlayConfiguration.vehicleName,
+        // 关键：传给 ACC 的 identifier 必须是 MAC 地址，且与 AirPlay TXT 的 deviceid 一致。
+        // 原版 accessoryd 日志可见 identifier: 9A:53:6C:3D:C7:BB，随后自动设置
+        // IAPAppAccessoryMacAddressKey 把连接关联到真实配件；传普通名字只会拿到空壳端点，
+        // 数据被原样回吐（本地回环），系统永远不回话。
+        let accIdentifier = AirPlayIdentity.shared.deviceID
+        onLog?("[探测] ACC identifier（须与 TXT deviceid 一致）：\(accIdentifier)")
+        probe.start(name: accIdentifier,
                     identity: AccessoryIdentity.shared,
                     transportTypes: [2, 8])
 

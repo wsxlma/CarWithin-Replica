@@ -1,0 +1,70 @@
+name: upstream-build
+
+# 直接编译上游 AGPL-3.0 源码（xmz28/CarWithin v1.0.3），不再手工复刻实现。
+# 许可证与来源见 upstream/LICENSE、upstream/LICENSES、upstream/THIRD_PARTY_NOTICES.txt。
+on:
+  push:
+    paths:
+      - "upstream/**"
+      - ".github/workflows/upstream.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.0.app || true
+          xcodebuild -version
+
+      - name: 编译上游工程
+        run: |
+          cd upstream
+          xcodebuild \
+            -project TDSCarKit.xcodeproj \
+            -scheme TDSCarKit \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            TDS_WIFI_ENTITLEMENTS="$PWD/App/TDSCarKit.entitlements" \
+            build
+
+      - name: 打包 IPA
+        run: |
+          APP=upstream/build/Build/Products/Release-iphoneos/TDSCarKit.app
+          if [ ! -d "$APP" ]; then
+            echo "未找到编译产物，列出目录："
+            find upstream/build/Build/Products -maxdepth 3 -name "*.app" -print
+            exit 1
+          fi
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          # 若上游工程未自动打包身份材料（我们刻意不把证书放进仓库），这里不做任何注入。
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/TDSCarKit.app/Info.plist || true
+          zip -qry CarWithin-upstream-unsigned.ipa Payload
+          shasum -a 256 CarWithin-upstream-unsigned.ipa > SHA256SUMS
+          ls -la CarWithin-upstream-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CarWithin-upstream-unsigned-ipa
+          path: |
+            CarWithin-upstream-unsigned.ipa
+            SHA256SUMS
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            CarWithin-upstream-unsigned.ipa
+            SHA256SUMS
+          fail_on_unmatched_files: true
