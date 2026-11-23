@@ -65,12 +65,12 @@ final class DirectAccessoryTransport: NSObject {
         // 原版：identifier 就是这个字符串（反汇编里 x3 = objc_retain(x2)，
         // x2 是 startWithIdentifier: 的入参）。传 self 会让 NSXPCEncoder 抛
         // "unrecognized object" 直接 SIGABRT —— 普通 NSObject 不符合 NSSecureCoding。
-        var connection = ACCBridge.createConnection(client, type: 2, identifier: identifier)
+        var connection = ACCBridge.createConnection(client, type: 2, identifier: identifier as NSString)
         if let value = connection {
             onLog?("[直连] createConnection(type=2) → \(value)")
         } else {
             onLog?("[直连] createConnection(type=2) 返回 nil，回退 type=1")
-            connection = ACCBridge.createConnection(client, type: 1, identifier: identifier)
+            connection = ACCBridge.createConnection(client, type: 1, identifier: identifier as NSString)
             if let value = connection {
                 onLog?("[直连] createConnection(type=1) → \(value)")
             }
