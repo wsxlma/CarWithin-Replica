@@ -71,8 +71,8 @@ final class BLEBootstrap: NSObject {
                 }
             }
             if let channel = self.l2capChannel {
-                channel.inputStream.close()
-                channel.outputStream.close()
+                channel.inputStream?.close()
+                channel.outputStream?.close()
             }
             self.l2capChannel = nil
             self.psmCharacteristic = nil
@@ -134,8 +134,10 @@ final class BLEBootstrap: NSObject {
     private func openChannel(_ channel: CBL2CAPChannel) {
         l2capChannel = channel
         onLog?("[BLE] L2CAP 通道已建立 psm=\(publishedPSM)")
-        let input = channel.inputStream
-        let output = channel.outputStream
+        guard let input = channel.inputStream, let output = channel.outputStream else {
+            onLog?("[BLE] L2CAP 通道流不可用")
+            return
+        }
         input.delegate = self
         output.delegate = self
         input.schedule(in: .main, forMode: .default)
@@ -243,10 +245,14 @@ extension BLEBootstrap: CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager,
-                           didOpen channel: CBL2CAPChannel,
+                           didOpen channel: CBL2CAPChannel?,
                            error: Error?) {
         if let error {
             onLog?("[BLE] L2CAP 打开失败：\(error.localizedDescription)")
+            return
+        }
+        guard let channel else {
+            onLog?("[BLE] L2CAP 通道为 nil")
             return
         }
         openChannel(channel)

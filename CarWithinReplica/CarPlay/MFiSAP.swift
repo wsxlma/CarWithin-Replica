@@ -36,8 +36,8 @@ enum MFiSAP {
             throw ProtocolError.message("MFiSAP ECDH 失败：\(error.localizedDescription)")
         }
 
-        let aesKey = Data(SHA1.hash(data: sharedSecret + Data("SEA-KEY".utf8))).prefix(16)
-        let aesIV = Data(SHA1.hash(data: sharedSecret + Data("SEA-IV".utf8))).prefix(16)
+        let aesKey = Data(sha1(sharedSecret + Data("SEA-KEY".utf8))).prefix(16)
+        let aesIV = Data(sha1(sharedSecret + Data("SEA-IV".utf8))).prefix(16)
 
         let ourPublic = ephemeral.publicKey.rawRepresentation
         let challenge = Data(SHA256.hash(data: ourPublic))
@@ -53,8 +53,16 @@ enum MFiSAP {
         return output
     }
 
-    private static func be32(_ value: Int) -> Data {
-        let v = UInt32(truncatingIfNeeded: value)
+    /// CryptoKit 不提供 SHA1（只有 SHA256 及以上），MFiSAP 规定用 SHA1，走 CommonCrypto。
+    private static func sha1(_ data: Data) -> Data {
+        var digest = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+        data.withUnsafeBytes { buffer in
+            _ = CC_SHA1(buffer.baseAddress, CC_LONG(data.count), &digest)
+        }
+        return Data(digest)
+    }
+
+    private static func be32(_ value: Int) -> Data {        let v = UInt32(truncatingIfNeeded: value)
         return Data([UInt8((v >> 24) & 0xFF),
                      UInt8((v >> 16) & 0xFF),
                      UInt8((v >> 8) & 0xFF),
