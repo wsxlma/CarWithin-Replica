@@ -26,6 +26,9 @@ enum ProtocolError: LocalizedError {
 final class AccessoryIdentity {
     static let shared = AccessoryIdentity()
 
+    /// 主线程（设置页）与 CarPlay 后台队列都会访问，所有状态读写统一走这把锁。
+    private let lock = NSRecursiveLock()
+
     private(set) var certificateChain: Data?
     private(set) var leafCertificate: SecCertificate?
     private(set) var secKey: SecKey?
@@ -45,31 +48,26 @@ final class AccessoryIdentity {
     // MARK: - 载入
 
     func load() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
         var steps: [String] = []
 
-        // 允许重复载入（用户导入文件后点「重新载入」），先把上一次的状态清空。
-        certificateChain = nil
-        leafCertificate = nil
-        secKey = nil
-        p256Key = nil
-        isReady = false
-        identifier = "CarWithin"
-
+        // 先全部解析到局部变量，成功后才一次性提交。
+        // 这样设置页反复调用 load() 时，正在进行的 CarPlay 会话不会看到 secKey 被临时清空。
         guard let leafURL = locate("leaf.cer") else {
             return ["未找到 leaf.cer"] + Self.importHint.components(separatedBy: "\n")
         }
         guard let leafData = try? Data(contentsOf: leafURL),
               let certificate = SecCertificateCreateWithData(nil, leafData as CFData) else {
-            return ["leaf.cer 解析失败"]
+            return ["leaf.cer 解析失败"] + Self.importHint.components(separatedBy: "\n")
         }
-        leafCertificate = certificate
 
         let summary = SecCertificateCopySubjectSummary(certificate) as String? ?? "未知"
-        identifier = summary
         steps.append("叶子证书：\(summary)")
 
+        var newChain: Data?
         if let p7bURL = locate("certificate.p7b"), let p7b = try? Data(contentsOf: p7bURL) {
-            certificateChain = p7b
+            newChain = p7b
             steps.append("证书链：\(p7b.count) 字节")
         } else {
             steps.append("缺少 certificate.p7b（0xAA01 将无内容可回）")
@@ -83,13 +81,7 @@ final class AccessoryIdentity {
         }
 
         let normalized = Self.normalize(keyData)
-        var candidates: [Data] = []
-        if normalized.count == 32 { candidates.append(normalized) }
-        if normalized.count > 32 { candidates.append(normalized.suffix(32)) }
-        if normalized.first == 0x04, normalized.count > 33 {
-            candidates.append(normalized.dropFirst().prefix(32))
-        }
-        steps.append("私钥 \(keyData.count)B → 归一化 \(normalized.count)B，候选 \(candidates.count) 个")
+        steps.append("私钥 \(keyData.count)B → 归一化 \(normalized.count)B")
 
         var leafPublic: Data?
         if let leafKey = SecCertificateCopyKey(certificate) {
@@ -99,16 +91,18 @@ final class AccessoryIdentity {
         // 原版 private.x963 是 97 字节的 SEC1/x9.63 私钥：0x04 ‖ X(32) ‖ Y(32) ‖ D(32)。
         // SecKeyCreateWithData 正好吃这个长度；同时把 D（末 32 字节）交给 CryptoKit 便于公钥比对。
         var x963Candidate = Data()
+        var newP256: P256.Signing.PrivateKey?
         if normalized.count == 97, normalized.first == 0x04 {
             x963Candidate = normalized
             let scalar = normalized.suffix(32)
             if let key = try? P256.Signing.PrivateKey(rawRepresentation: scalar) {
-                p256Key = key
-                steps.append("x963 97B：末 32 字节作标量，公钥前 65B 比对\(key.publicKey.x963Representation == normalized.prefix(65) ? "一致" : "不一致")")
+                newP256 = key
+                let match = key.publicKey.x963Representation == normalized.prefix(65)
+                steps.append("x963 97B：末 32 字节作标量，公钥前 65B 比对\(match ? "一致" : "不一致")")
             }
         } else if normalized.count == 32 {
             if let key = try? P256.Signing.PrivateKey(rawRepresentation: normalized) {
-                p256Key = key
+                newP256 = key
                 x963Candidate = key.x963Representation
                 steps.append("裸 32B 标量：已重建 x963 \(x963Candidate.count)B")
             }
@@ -134,9 +128,8 @@ final class AccessoryIdentity {
             }
         }
 
-        if p256Key == nil, let key = matchedKey,
+        if newP256 == nil, let key = matchedKey,
            let raw = SecKeyCopyExternalRepresentation(key, nil) as Data? {
-            // 从 SecKey 反推 P256 标量没有公开接口，这里只登记公钥用于比对。
             steps.append("SecKey 就绪，公钥 \(raw.count)B")
         }
 
@@ -147,9 +140,15 @@ final class AccessoryIdentity {
         }
 
         guard let key = matchedKey else {
-            return steps + ["私钥无法构造 SecKey（首位 \(Self.hexPrefix(normalized))）"]
+            return steps + ["私钥无法构造 SecKey（首位 \(Self.hexPrefix(normalized))）"] + Self.importHint.components(separatedBy: "\n")
         }
+
+        // 解析全部成功，原子提交。
+        certificateChain = newChain
+        leafCertificate = certificate
+        p256Key = newP256
         secKey = key
+        identifier = summary
         isReady = true
         steps.append("签名私钥就绪（RFC4754，P-256）")
         return steps
@@ -162,7 +161,10 @@ final class AccessoryIdentity {
         guard challenge.count == 32 else {
             throw ProtocolError.message("MFi v3 challenge must be 32 bytes, got \(challenge.count)")
         }
-        guard let secKey else {
+        lock.lock()
+        let key = secKey
+        lock.unlock()
+        guard let key else {
             throw ProtocolError.message("签名私钥未就绪")
         }
         var error: Unmanaged<CFError>?
