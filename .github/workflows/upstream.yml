@@ -2,6 +2,9 @@ name: upstream-build
 
 # 直接编译上游 AGPL-3.0 源码（xmz28/CarWithin v1.0.3），不再手工复刻实现。
 # 许可证与来源见 upstream/LICENSE、upstream/LICENSES、upstream/THIRD_PARTY_NOTICES.txt。
+permissions:
+  contents: write
+
 on:
   push:
     paths:
