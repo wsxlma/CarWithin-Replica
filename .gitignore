@@ -31,3 +31,8 @@ mfi/
 *.carwithin
 analysis*.txt
 cp-strings.txt
+
+# ===== 设备日志：含设备标识、其它 App 崩溃记录，不入库 =====
+cwlogs/
+*.ips
+*.ips.ca.synced
