@@ -141,11 +141,15 @@ final class DirectAccessoryTransport: NSObject {
     // MARK: - 停止
 
     func stop() {
+        // 严格照原版顺序：先清 generation，再 destroy endpoint → connection，
+        // 每一步都先做 HasMethod 检查（方法不存在时直接调用会 SIGABRT）。
         generation = nil
-        if let client, let endpoint {
+        if let client, let endpoint,
+           ACCBridge.hasMethod(client, "destroyEndpointWithUUID:", argumentCount: 1) {
             _ = ACCBridge.destroyEndpoint(client, uuid: endpoint)
         }
-        if let client, let connection {
+        if let client, let connection,
+           ACCBridge.hasMethod(client, "destroyConnectionWithUUID:", argumentCount: 1) {
             _ = ACCBridge.destroyConnection(client, uuid: connection)
         }
         endpoint = nil

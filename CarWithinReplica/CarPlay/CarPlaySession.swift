@@ -11,17 +11,15 @@ enum ACCBridge {
     static let endpointSelector = "createEndpointWithTransportType:andProtocol:andIdentifier:andDataOutHandler:forConnectionWithUUID:publishConnection:"
 
     static var isAvailable: Bool {
-        guard let handle = dlopen(frameworkPath, RTLD_NOW) else { return false }
-        defer { dlclose(handle) }
+        guard dlopen(frameworkPath, RTLD_NOW) != nil else { return false }
         return NSClassFromString("ACCTransportClient") != nil
     }
 
     /// 把方法名和类型编码一起导出。类型编码就是参数表，不需要真的调用。
     static func selectorDump() -> String {
-        guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
+        guard dlopen(frameworkPath, RTLD_NOW) != nil else {
             return "CoreAccessories 加载失败：\(dlerror().map { String(cString: $0) } ?? "未知")"
         }
-        defer { dlclose(handle) }
         guard let cls = NSClassFromString("ACCTransportClient") else {
             return "未找到 ACCTransportClient"
         }
@@ -50,8 +48,7 @@ enum ACCBridge {
 
     /// 只输出 endpoint 方法的参数表，便于直接照抄调用。
     static func endpointSignature() -> String {
-        guard let handle = dlopen(frameworkPath, RTLD_NOW) else { return "CoreAccessories 加载失败" }
-        defer { dlclose(handle) }
+        guard dlopen(frameworkPath, RTLD_NOW) != nil else { return "CoreAccessories 加载失败" }
         guard let cls = NSClassFromString("ACCTransportClient") else { return "未找到 ACCTransportClient" }
 
         let selector = NSSelectorFromString(endpointSelector)
@@ -64,73 +61,6 @@ enum ACCBridge {
             result = "createEndpoint（类方法）参数表：\n" + signature(of: method)
         }
         return result
-    }
-
-    /// 验证 B：给 dataOutHandler 传真实 block，再试建 endpoint。
-    /// 这一步可能因 block 签名不符而崩溃，所以单独成一个开关。
-    static func createEndpointWithBlock() -> [String] {
-        var steps: [String] = []
-        guard let handle = dlopen(frameworkPath, RTLD_NOW),
-              let cls = NSClassFromString("ACCTransportClient"),
-              let meta = object_getClass(cls) else {
-            return ["CoreAccessories 不可用"]
-        }
-        defer { dlclose(handle) }
-
-        let sharedSelector = NSSelectorFromString("sharedClient")
-        guard let sharedIMP = class_getMethodImplementation(meta, sharedSelector) else {
-            return ["没有 +sharedClient"]
-        }
-        typealias SharedFn = @convention(c) (AnyObject, Selector) -> AnyObject?
-        guard let client = unsafeBitCast(sharedIMP, to: SharedFn.self)(cls as AnyObject, sharedSelector) else {
-            return ["sharedClient 返回 nil"]
-        }
-
-        let connectionSelector = NSSelectorFromString("createConnectionWithType:andIdentifier:")
-        guard let connectionIMP = class_getMethodImplementation(cls, connectionSelector) else {
-            return steps + ["没有 createConnection"]
-        }
-        typealias ConnectionFn = @convention(c) (AnyObject, Selector, Int32, NSString) -> AnyObject?
-        guard let created = unsafeBitCast(connectionIMP, to: ConnectionFn.self)(
-            client, connectionSelector, 0, "CarWithin" as NSString) else {
-            return steps + ["createConnection 返回 nil"]
-        }
-        let uuid: NSUUID
-        if let value = created as? NSUUID {
-            uuid = value
-        } else if let text = created as? String, let parsed = UUID(uuidString: text) {
-            uuid = parsed as NSUUID
-        } else {
-            return steps + ["createConnection 返回值不是 UUID：\(created)"]
-        }
-        steps.append("connection → \(uuid)")
-
-        // 真实 block：收到 endpoint 数据时写日志
-        let handler: @convention(block) (AnyObject?) -> Void = { payload in
-            let count = (payload as? NSData)?.length ?? 0
-            DiagnosticsLog.shared.append("[ACC] endpoint 收到 \(count)B")
-        }
-
-        let endpointSelector = NSSelectorFromString(endpointSelector)
-        guard let endpointIMP = class_getMethodImplementation(cls, endpointSelector) else {
-            return steps + ["没有 createEndpoint"]
-        }
-        typealias EndpointFn = @convention(c) (AnyObject, Selector, Int32, Int32,
-                                               NSString, AnyObject?, NSUUID, Bool) -> AnyObject?
-        let endpointFn = unsafeBitCast(endpointIMP, to: EndpointFn.self)
-
-        for transport in Int32(1)...Int32(3) {
-            for proto in Int32(0)...Int32(5) {
-                let result = endpointFn(client, endpointSelector, transport, proto,
-                                        MFIIdentity.shared.identifier as NSString, handler as AnyObject, uuid, true)
-                if let result {
-                    steps.append("createEndpoint(transport=\(transport), protocol=\(proto), identifier=UUID) → \(result)")
-                    return steps
-                }
-            }
-        }
-        steps.append("createEndpoint 全组 nil（identifier 用 connection UUID）")
-        return steps
     }
 
     /// 从 embedded.mobileprovision 读取 entitlements 键名。
