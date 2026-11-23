@@ -131,6 +131,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         zeehoCardStatus.text = message
     }
     private let ninebotCard = UIStackView()
+    /// 主页九号卡片的标题，需要随 5 寸 / 7 寸切换而更新。
+    private var ninebotCardTitle: UILabel?
     private let ninebotCardStatus = UILabel()
     private let ninebotStatus = StatusLabel()
     private let ninebotAddressField = UITextField()
@@ -439,7 +441,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         zeehoSettings.addAction(UIAction { [weak self] _ in self?.revealSettings(output: true) }, for: .touchUpInside)
         zeehoCard.addArrangedSubview(zeehoSettings)
         stack.addArrangedSubview(zeehoCard)
-        configureConnectionCard(ninebotCard, title: "九号 5 寸连接", symbol: "scooter", color: .systemBlue,
+        ninebotCardTitle = configureConnectionCard(ninebotCard, title: "九号 5 寸连接", symbol: "scooter", color: .systemBlue,
             instructions: "让 iPhone 加入仪表 Wi-Fi，打开仪表投屏后启动 CarPlay。", status: ninebotCardStatus)
         let ninebotSettings = UIButton(type: .system)
         ninebotSettings.configuration = .tinted()
@@ -955,8 +957,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         card.layer.cornerCurve = .continuous
     }
 
+    @discardableResult
     private func configureConnectionCard(_ card: UIStackView, title: String, symbol: String, color: UIColor,
-                                         instructions: String, status: UILabel) {
+                                         instructions: String, status: UILabel) -> UILabel {
         configureOutputCard(card)
         let icon = UIImageView(image: UIImage(systemName: symbol))
         icon.tintColor = color
@@ -980,6 +983,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         card.addArrangedSubview(header)
         card.addArrangedSubview(help)
         card.addArrangedSubview(status)
+        return titleLabel
     }
 
     private func refreshBrowserAddressLabels() {
@@ -990,6 +994,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     }
 
     private func refreshVideoOutputSummary() {
+        // 统一在这里同步九号卡片标题：初始化、切换输出、状态刷新都会经过这里，
+        // 避免恢复设置时卡片还没创建导致标题停在 5 寸。
+        refreshNinebotCardTitle()
         videoOutputSwitch.isEnabled = !running && outputMode == .browser
         videoOutputPortField.isEnabled = !running && outputMode == .browser && videoOutputSwitch.isOn
         secureVideoOutputPortField.isEnabled = videoOutputPortField.isEnabled
@@ -1911,6 +1918,7 @@ extension ReceiverViewController {
         let restoredOutput = savedOutput.flatMap(HeadUnitOutput.init(rawValue:)) ?? migratedOutput
         headUnitOutput.selectedSegmentIndex = Self.headUnitChoices.firstIndex(of: restoredOutput) ?? 0
         headUnitOutput.addTarget(self, action: #selector(headUnitOutputChanged), for: .valueChanged)
+        refreshNinebotCardTitle()
         zeehoAddressField.text = defaults.string(forKey: "zeehoAddress") ?? "192.168.0.1"
         zeehoAddressField.keyboardType = .decimalPad
         zeehoAddressField.addTarget(self, action: #selector(saveHeadUnitOutput), for: .editingDidEnd)
@@ -1966,8 +1974,20 @@ extension ReceiverViewController {
         UserDefaults.standard.set(tailingAddressField.text ?? "", forKey: "tailingAddress")
         refreshVideoOutputSummary()
     }
+    /// 主页卡片的标题必须跟着「当前输出」走，否则选了 7 寸仍显示 5 寸。
+    private func refreshNinebotCardTitle() {
+        let large = outputMode.ninebotLarge
+        ninebotCardTitle?.text = large ? "九号 7 寸连接" : "九号 5 寸连接"
+        ninebotCardStatus.text = large
+            ? "仪表画面 1024×600 · H.264 · 30 FPS"
+            : "仪表画面 848×480 · H.264 · 30 FPS"
+    }
+
     @objc private func headUnitOutputChanged() {
         saveHeadUnitOutput()
+        refreshNinebotCardTitle()
+        // 会话分辨率无法热切，运行中改输出只对下一次启动生效。
+        if running { log("输出已切换为「\(headUnitOutput.selectedTitle)」，停止并重新启动 CarPlay 后生效") }
         refreshVideoOutputSummary()
         updateVideoAspect()
         reloadVisibleSettings()
@@ -2201,7 +2221,8 @@ extension ReceiverViewController {
                     .page("从文件导入 MFi 证书", icon: ("doc.badge.plus", .systemBlue)) { [unowned self] in
                         self.identityImportPage()
                     },
-                    .page("诊断与实验", icon: ("stethoscope", .systemTeal)) { [unowned self] in self.diagnosticsPage() }
+                    .page("诊断与实验", icon: ("stethoscope", .systemTeal)) { [unowned self] in self.diagnosticsPage() },
+                    SettingsRow(title: "作者 L.DtQSuger/小刘不柒糖", icon: ("heart.fill", .systemRed), kind: .info)
                 ])
             ]
         }
