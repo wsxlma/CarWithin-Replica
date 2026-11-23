@@ -4,8 +4,12 @@ import VideoToolbox
 
 /// Runs codecs and UDP writes off the CarPlay receive queue.
 final class NinebotOutput {
-    static let width = 848
-    static let height = 480
+    /// 九号 5 寸仪表
+    static let standardWidth = 848
+    static let standardHeight = 480
+    /// 九号 7 寸仪表（实测前先用常见规格，日志会打印实际值便于核对）
+    static let largeWidth = 1024
+    static let largeHeight = 600
     static let fps = 30
 
     private let queue = DispatchQueue(label: "CarWithin.ninebot", qos: .userInitiated)
@@ -13,10 +17,14 @@ final class NinebotOutput {
 
     deinit { stop() }
 
-    func start(localAddress: String, targetAddress: String, onState: @escaping (String) -> Void,
+    func start(localAddress: String, targetAddress: String,
+               width: Int = NinebotOutput.standardWidth,
+               height: Int = NinebotOutput.standardHeight,
+               onState: @escaping (String) -> Void,
                onLog: @escaping (String) -> Void, requestKeyframe: @escaping () -> Void) {
         stop()
-        let next = Session(queue: queue, onState: onState, onLog: onLog, requestKeyframe: requestKeyframe)
+        let next = Session(queue: queue, width: width, height: height,
+                           onState: onState, onLog: onLog, requestKeyframe: requestKeyframe)
         session = next
         queue.async { next.start(localAddress, targetAddress) }
     }
@@ -35,6 +43,8 @@ final class NinebotOutput {
 
     private final class Session: @unchecked Sendable {
         let queue: DispatchQueue
+        let width: Int
+        let height: Int
         let onState: (String) -> Void
         let onLog: (String) -> Void
         let requestKeyframe: () -> Void
@@ -84,7 +94,7 @@ final class NinebotOutput {
                 video = try NinebotUDPSocket(localIP: local, localPort: videoPort, remoteIP: target, remotePort: videoPort)
                 control = try NinebotUDPSocket(localIP: local, localPort: controlPort, remoteIP: target, remotePort: controlPort)
                 report("等待九号仪表回应…")
-                onLog("九号 5 寸：UDP 5012/5013 · 848×480 · H.264 Baseline · 30 FPS")
+                onLog("九号仪表：UDP 5012/5013 · \(width)×\(height) · H.264 Baseline · \(NinebotOutput.fps) FPS")
                 let timer = DispatchSource.makeTimerSource(queue: queue)
                 timer.schedule(deadline: .now(), repeating: .milliseconds(33), leeway: .milliseconds(3))
                 timer.setEventHandler { [weak self] in self?.tick() }
@@ -213,7 +223,7 @@ final class NinebotOutput {
             do {
                 if encoder == nil {
                     guard now - lastCodecFailure >= 0.5 else { return nil }
-                    encoder = try H264Encoder(width: NinebotOutput.width, height: NinebotOutput.height,
+                    encoder = try H264Encoder(width: width, height: height,
                                               fps: NinebotOutput.fps, bitrate: 1_500_000) { [weak self] result in
                         guard let self else { return }
                         self.lock.withLock { self.encoded = result }
@@ -241,7 +251,7 @@ final class NinebotOutput {
         }
 
         private func fittedImage(_ image: CVPixelBuffer) throws -> CVPixelBuffer {
-            let width = NinebotOutput.width, height = NinebotOutput.height
+            let width = width, height = height
             if CVPixelBufferGetWidth(image) == width, CVPixelBufferGetHeight(image) == height { return image }
             var buffer: CVPixelBuffer?
             let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,

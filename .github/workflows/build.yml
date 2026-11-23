@@ -4,9 +4,9 @@ permissions:
   contents: write
 
 on:
+  # 只跑分支，不再响应 tag：发布统一由 upstream.yml 负责，避免旧实现把包抢先进 release。
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 

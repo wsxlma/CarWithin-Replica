@@ -90,6 +90,8 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     /// 0 = follow the head unit's screen, 1 = the fixed resolution.
     private let sizeModeControl = ChoiceMenu(items: ["跟随车机", "固定尺寸"])
     private let iconSizeControl = ChoiceMenu(items: ReceiverConfiguration.iconSizes.map { "\($0.title)（\($0.widthMM) mm）" })
+    /// 九号仪表尺寸：索引 0 = 5 寸(848×480)，1 = 7 寸(1024×600)
+    private let ninebotSizeControl = ChoiceMenu(items: ["5 寸（848×480）", "7 寸（1024×600）"])
     private let autoRestartSwitch = UISwitch()
     private let performanceControl = ChoiceMenu(items: BrowserPerformance.allCases.map(\.title))
     private let showTouchesSwitch = UISwitch()
@@ -747,6 +749,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         defaults.set(["auto", "h264", "h265"][max(0, codecControl.selectedSegmentIndex)], forKey: "videoCodec")
         defaults.set(sizeModeControl.selectedSegmentIndex, forKey: "displaySizeMode")
         defaults.set(ReceiverConfiguration.iconSizes[max(0, iconSizeControl.selectedSegmentIndex)].widthMM, forKey: "widthPhysicalMM")
+        defaults.set(ninebotSizeControl.selectedSegmentIndex == 1, forKey: "ninebotLarge")
         defaults.set(selectedPerformance.rawValue, forKey: "browserPerformance")
         defaults.set(autoRestartSwitch.isOn, forKey: "autoRestart")
         defaults.set(showTouchesSwitch.isOn, forKey: "showTouches")
@@ -766,7 +769,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         }
         if outputMode == .ninebot {
             let icon = ReceiverConfiguration.iconSizes[max(0, iconSizeControl.selectedSegmentIndex)].widthMM
-            return DisplayPlan(width: NinebotOutput.width, height: NinebotOutput.height,
+            let large = ninebotSizeControl.selectedSegmentIndex == 1
+            return DisplayPlan(width: large ? NinebotOutput.largeWidth : NinebotOutput.standardWidth,
+                               height: large ? NinebotOutput.largeHeight : NinebotOutput.standardHeight,
                                fps: NinebotOutput.fps, codec: .h264, iconWidthMM: icon)
         }
         if outputMode == .tailing {
@@ -1056,6 +1061,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         }
         if outputMode == .ninebot {
             config.ninebotAddress = (ninebotAddressField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            config.ninebotLarge = ninebotSizeControl.selectedSegmentIndex == 1
         }
         if outputMode.usesInstrumentWiFi {
             let screen = view.window?.screen ?? UIScreen.main
@@ -1340,6 +1346,15 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     }
     private func loadIdentity() {
         let importing = ProcessInfo.processInfo.arguments.contains("--import-mfi-identity")
+        // 侧载安装时用户无法传启动参数，因此启动即尝试从 Documents 自动导入。
+        // 导入成功会写入 Keychain 并删除 Documents 中的私钥暂存文件，之后走 Keychain。
+        if !importing, let autoImported = try? AccessoryIdentityStore.importFromDocuments() {
+            identity = autoImported
+            startButton.isEnabled = true
+            statusLabel.text = "可以开始连接"
+            log("已从 Documents 自动导入 MFi 身份并保存到 Keychain")
+            return
+        }
         do {
             if importing {
                 identity = try AccessoryIdentityStore.importFromDocuments()
@@ -1860,12 +1875,14 @@ extension ReceiverViewController {
         codecControl.selectedSegmentIndex = ["auto": 0, "h264": 1, "h265": 2][defaults.string(forKey: "videoCodec") ?? "h264"] ?? 1
         let savedWidth = defaults.object(forKey: "widthPhysicalMM") as? Int ?? CarPlayInfo.defaultWidthPhysicalMM
         iconSizeControl.selectedSegmentIndex = ReceiverConfiguration.iconSizes.firstIndex { $0.widthMM == savedWidth } ?? 1
+        ninebotSizeControl.selectedSegmentIndex = defaults.bool(forKey: "ninebotLarge") ? 1 : 0
         performanceControl.selectedSegmentIndex = BrowserPerformance.allCases.firstIndex(of:
             BrowserPerformance(rawValue: defaults.string(forKey: "browserPerformance") ?? "") ?? .auto) ?? 0
         autoRestartSwitch.isOn = defaults.object(forKey: "autoRestart") as? Bool ?? false
         showTouchesSwitch.isOn = defaults.bool(forKey: "showTouches")
         carButtonSwitch.isOn = defaults.object(forKey: "carButton") as? Bool ?? true
         let displayControls: [UIControl] = [resolutionControl, aspectRatioControl, sizeModeControl, frameRateControl, codecControl, iconSizeControl,
+                                            ninebotSizeControl,
                                             performanceControl, autoRestartSwitch, showTouchesSwitch, carButtonSwitch]
         displayControls.forEach { $0.addTarget(self, action: #selector(displaySettingChanged), for: .valueChanged) }
         appearanceControl.selectedSegmentIndex = defaults.integer(forKey: "carPlayAppearance")
@@ -2197,9 +2214,11 @@ extension ReceiverViewController {
                 ]
             }
             if outputMode == .ninebot {
+                let large = ninebotSizeControl.selectedSegmentIndex == 1
                 return [
-                    SettingsSection("九号 5 寸", [
-                        .info("本机与仪表画面", "848×480 · H.264 · 30 FPS")
+                    SettingsSection("九号 \(large ? "7" : "5") 寸", [
+                        .control("仪表尺寸", icon: ("rectangle.on.rectangle", .systemBlue), ninebotSizeControl),
+                        .info("本机与仪表画面", large ? "1024×600 · H.264 · 30 FPS" : "848×480 · H.264 · 30 FPS")
                     ]),
                     SettingsSection("图标", [.control("CarPlay 图标大小", icon: ("square.grid.2x2.fill", .systemPurple), iconSizeControl)])
                 ]

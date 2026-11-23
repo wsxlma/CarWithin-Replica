@@ -102,7 +102,10 @@ final class NativeReceiver {
                     requestKeyframe: { [weak self] in self?.requestKeyFrame(reason: "极核解码恢复") })
             }
             if let target = configuration.ninebotAddress {
+                let large = configuration.ninebotLarge
                 self.ninebot.start(localAddress: configuration.address, targetAddress: target,
+                    width: large ? NinebotOutput.largeWidth : NinebotOutput.standardWidth,
+                    height: large ? NinebotOutput.largeHeight : NinebotOutput.standardHeight,
                     onState: { [weak self] in self?.onNinebotState?($0) },
                     onLog: { [weak self] in self?.log($0) },
                     requestKeyframe: { [weak self] in self?.requestKeyFrame(reason: "九号解码恢复") })

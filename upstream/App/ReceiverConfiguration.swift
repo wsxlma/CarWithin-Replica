@@ -28,6 +28,8 @@ struct ReceiverConfiguration {
     var carLifeAddress: String?
     var zeehoAddress: String?
     var ninebotAddress: String?
+    /// 九号仪表尺寸：false = 5 寸(848×480)，true = 7 寸(1024×600)
+    var ninebotLarge = false
     var tailingAddress: String?
     var tailingPhoneInfo: TailingPhoneInfo?
     var carLinkRelayAddress: String?
