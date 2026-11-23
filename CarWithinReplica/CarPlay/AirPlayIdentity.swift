@@ -87,7 +87,7 @@ final class AirPlayIdentity {
     var txtRecord: [String: Data] {
         func text(_ value: String) -> Data { Data(value.utf8) }
         return [
-            "features": text("0x\(String(featuresLow, radix: 16)),0x\(String(featuresHigh, radix: 16))"),
+            "features": text("0x\(String(Self.featuresLow, radix: 16)),0x\(String(Self.featuresHigh, radix: 16))"),
             "pi": text(instanceID),
             "srcvers": text(Self.sourceVersion),
             "flags": text(Self.flags),
