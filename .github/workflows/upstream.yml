@@ -28,7 +28,9 @@ jobs:
             -scheme TDSCarKit \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -derivedDataPath build \
+            SUPPORTED_PLATFORMS=iphoneos \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
