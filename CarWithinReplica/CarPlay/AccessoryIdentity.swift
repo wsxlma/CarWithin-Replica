@@ -168,7 +168,7 @@ final class AccessoryIdentity {
             throw ProtocolError.message("签名私钥未就绪")
         }
         var error: Unmanaged<CFError>?
-        guard let signature = SecKeyCreateSignature(secKey,
+        guard let signature = SecKeyCreateSignature(key,
                                                     .ecdsaSignatureRFC4754,
                                                     challenge as CFData,
                                                     &error) else {
