@@ -29,7 +29,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
-            -derivedDataPath build \
+            SYMROOT="$PWD/build" \
             SUPPORTED_PLATFORMS=iphoneos \
             SUPPORTS_MACCATALYST=NO \
             SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD=NO \
@@ -44,10 +44,10 @@ jobs:
 
       - name: 打包 IPA
         run: |
-          APP=upstream/build/Build/Products/Release-iphoneos/TDSCarKit.app
+          APP=upstream/build/Release-iphoneos/TDSCarKit.app
           if [ ! -d "$APP" ]; then
             echo "未找到编译产物，列出目录："
-            find upstream/build/Build/Products -maxdepth 3 -name "*.app" -print
+            find upstream/build -maxdepth 3 -name "*.app" -print
             exit 1
           fi
           rm -rf Payload
