@@ -4,21 +4,21 @@ import CryptoKit
 /// 自建端点第一步：把本机广播成一个 AirPlay / CarWithin 车机，
 /// 让同一台 iPhone 的 CarPlay 栈主动连进来（原版日志证据）。
 ///
-/// 两条路都广播：_carplay._tcp（标准无线 CarPlay）与 _airplay._tcp（原版走的
-/// AirPlay 协议路径）。TXT 只放 iOS 认的标准字段，车机配置走 /info 与 iAP2。
-/// 服务名取自车辆名称设置，改设置后调用 republish() 立即生效。
+/// 服务类型与 TXT 字段均以原版 App 的实抓 mDNS 记录为准：
+///   _airplay._tcp  → features=0x5653aee2,0x61 / srcvers=509.11 / model=TDSCarKit1,1
+/// 原版只广播 _airplay._tcp（配合 _carplay-ctrl._tcp），并不发 _carplay._tcp。
+/// deviceid / pi / pk 由 `AirPlayIdentity` 持久化，保证跨启动不变。
 final class BonjourPublisher: NSObject, NetServiceDelegate {
     static let shared = BonjourPublisher()
     var onLog: ((String) -> Void)?
 
     private var services: [NetService] = []
     private var confirmed = Set<ObjectIdentifier>()
-    private let pairingKey = Curve25519.KeyAgreement.PrivateKey()
     private var currentPort: Int32 = 7000
 
     private override init() { super.init() }
 
-    var publicKeyData: Data { pairingKey.publicKey.rawRepresentation }
+    var publicKeyData: Data { AirPlayIdentity.shared.publicKeyData }
 
     func start(name: String? = nil, port: Int32 = 7000) {
         // NetService 的 delegate 回调依赖 runloop。在 Task / 后台线程上 publish
@@ -30,7 +30,7 @@ final class BonjourPublisher: NSObject, NetServiceDelegate {
         stop()
         currentPort = port
         let serviceName = name ?? CarPlayConfiguration.vehicleName
-        let txt = CarPlayConfiguration.txtRecord(pairingKey: pairingKey.publicKey.rawRepresentation)
+        let txt = CarPlayConfiguration.txtRecord()
 
         // 严格照原版 Info.plist 的三条服务类型（原版**没有** _carplay._tcp，
         // 也没有 _apple-mobdev2._tcp）。之前多发的两个既无依据又容易引发注册冲突。

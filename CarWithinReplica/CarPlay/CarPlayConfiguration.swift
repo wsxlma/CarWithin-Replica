@@ -231,23 +231,10 @@ enum CarPlayConfiguration {
     /// Bonjour TXT 记录：只放 iOS 的 CarPlay/AirPlay 栈认的标准字段
     /// （对照 WirelessCarPlay 的 TXT 结构：deviceid / features / model / pk / flags）。
     /// 车机配置走 /info 与 iAP2 0x1D00，不塞进 TXT——mDNS 单包有上限，塞多了会被丢弃。
-    static func txtRecord(pairingKey: Data) -> [String: Data] {
-        func text(_ value: String) -> Data { Data(value.utf8) }
-        return [
-            "deviceid": text("AA:BB:CC:DD:EE:FF"),
-            "features": text("0x5A7FFFF7,0x1E"),
-            "flags": text("0x4"),
-            "model": text("CarWithin1,1"),
-            "name": text(vehicleName),
-            "manufacturer": text("CarWithin"),
-            "serialNumber": text("CW0001"),
-            "protovers": text("1.1"),
-            "srcvers": text("700.1"),
-            "vv": text("2"),
-            "pi": text(UUID().uuidString),
-            "pk": pairingKey,
-            "gid": text("CarWithin"),
-        ]
+    /// TXT 记录直接取 `AirPlayIdentity`，字段集合与取值全部来自原版 App 的实抓结果。
+    /// 之前这里是手写的猜测值（features/flags/pi 全错），iOS 因此不认。
+    static func txtRecord() -> [String: Data] {
+        AirPlayIdentity.shared.txtRecord
     }
 
     /// /info 的能力声明 plist。
@@ -257,10 +244,10 @@ enum CarPlayConfiguration {
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0"><dict>
         <key>name</key><string>\(vehicleName)</string>
-        <key>deviceID</key><string>AA:BB:CC:DD:EE:FF</string>
-        <key>model</key><string>CarWithin1,1</string>
-        <key>srcVers</key><string>700.1</string>
-        <key>features</key><integer>1517832183</integer>
+        <key>deviceID</key><string>\(AirPlayIdentity.shared.deviceID)</string>
+        <key>model</key><string>\(AirPlayIdentity.model)</string>
+        <key>srcVers</key><string>\(AirPlayIdentity.sourceVersion)</string>
+        <key>features</key><integer>\(AirPlayIdentity.featuresCombined)</integer>
         <key>keepAliveLowPower</key><true/>
         <key>keepAliveSendStatsAsBody</key><true/>
         <key>supportsH265</key><\(isH265 ? "true" : "false")/>

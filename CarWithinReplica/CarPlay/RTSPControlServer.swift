@@ -14,6 +14,8 @@ final class RTSPControlServer {
     private var mediaListeners: [NWListener] = []
     private var sessionID: String?
     private var nextPort: UInt16 = 50220
+    /// SETUP 里协商出来的音频 interleaved 通道号。
+    private var audioChannels = Set<UInt8>()
     private let queue = DispatchQueue(label: "carwithin.rtsp")
 
     /// 供自动重启守护判断服务是否还活着。
@@ -49,6 +51,7 @@ final class RTSPControlServer {
         mediaListeners.removeAll()
         sessionID = nil
         nextPort = 50220
+        audioChannels.removeAll()
         isReady = false
         lastClientAt = nil
         PairingState.shared.reset()
@@ -65,23 +68,44 @@ final class RTSPControlServer {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) {
             [weak self] content, _, isComplete, error in
             guard let self else { return }
-            var buffer = accumulated
+            var buffer = Data(accumulated)
             if let content { buffer.append(content) }
             guard error == nil else { connection.cancel(); return }
 
-            if let (request, consumed) = self.parse(buffer) {
-                self.handle(request, connection: connection)
-                let rest = buffer.dropFirst(consumed)
-                if !rest.isEmpty {
-                    self.readRequest(connection, accumulated: Data(rest))
-                } else {
-                    self.readRequest(connection, accumulated: Data())
+            // 同一条 TCP 连接上可能交替出现 RTSP 文本与 RTP 交错帧（以 0x24 开头），
+            // 必须逐帧剥离，否则媒体数据会被当成请求行解析而整条连接作废。
+            while !buffer.isEmpty {
+                if buffer[buffer.startIndex] == 0x24 {
+                    guard buffer.count >= 4 else { break }
+                    let start = buffer.startIndex
+                    let channel = buffer[start + 1]
+                    let length = Int(buffer[start + 2]) << 8 | Int(buffer[start + 3])
+                    guard buffer.count >= 4 + length else { break }
+                    let payload = buffer.subdata(in: (start + 4)..<(start + 4 + length))
+                    self.handleInterleaved(channel: channel, payload: payload)
+                    buffer = Data(buffer.dropFirst(4 + length))
+                    continue
                 }
-            } else if isComplete {
-                connection.cancel()
-            } else {
-                self.readRequest(connection, accumulated: buffer)
+                guard let (request, consumed) = self.parse(buffer) else { break }
+                self.handle(request, connection: connection)
+                buffer = Data(buffer.dropFirst(consumed))
             }
+
+            if buffer.isEmpty, isComplete {
+                connection.cancel()
+                return
+            }
+            self.readRequest(connection, accumulated: buffer)
+        }
+    }
+
+    /// RTP 交错帧：channel 奇偶区分音频/视频，具体由 SETUP 的 interleaved 参数决定。
+    private func handleInterleaved(channel: UInt8, payload: Data) {
+        SessionWatchdog.shared.noteActivity()
+        if audioChannels.contains(channel) {
+            AudioSink.shared.feed(payload)
+        } else {
+            onMedia?(payload)
         }
     }
 
@@ -156,13 +180,30 @@ final class RTSPControlServer {
 
         let method = request.method.uppercased()
         switch method {
+        case "OPTIONS":
+            // iOS 连上来的第一句就是 OPTIONS。拿不到 Public 列表它直接放弃整台车机。
+            extraHeaders.append("Public: ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER")
+            onLog?("OPTIONS 已应答（宣告 9 个方法）")
+        case "ANNOUNCE":
+            let sdp = String(decoding: request.body, as: UTF8.self)
+            onLog?("ANNOUNCE 收到 SDP \(request.body.count)B")
+            for line in sdp.components(separatedBy: "\r\n") where line.hasPrefix("a=") {
+                onLog?("  SDP " + line)
+            }
+            extraHeaders.append("Session: \(sessionIdentifier());timeout=60")
+        case "FLUSH", "PAUSE", "TEARDOWN", "SET_PARAMETER", "GET_PARAMETER":
+            onLog?("\(method) 已应答")
+            if method != "TEARDOWN" {
+                extraHeaders.append("Session: \(sessionIdentifier())")
+            }
         case "SETUP":
             let session = sessionIdentifier()
             extraHeaders.append("Session: \(session);timeout=60")
             let bodyText = String(decoding: request.body, as: UTF8.self)
-            let isAudio = bodyText.localizedCaseInsensitiveContains("audio")
+            // AirPlay 的 SETUP 路径形如 rtsp://host/streamid=0，音频流在 path 或 SDP 里有 audio 标记。
+            let isAudio = request.path.lowercased().contains("audio")
+                || bodyText.localizedCaseInsensitiveContains("m=audio")
                 || bodyText.localizedCaseInsensitiveContains("AAC")
-                || bodyText.contains("4194304")
             if let transport = setupTransport(request.headers["transport"] ?? "", audio: isAudio) {
                 extraHeaders.append("Transport: \(transport.header)")
                 onLog?("SETUP 已分配媒体端口 \(transport.port)，类型 \(transport.kind)")
@@ -175,14 +216,19 @@ final class RTSPControlServer {
             }
         case "RECORD":
             extraHeaders.append("Session: \(sessionIdentifier())")
-            onLog?("已接受 CarPlay RECORD，开始接收媒体")
+            extraHeaders.append("Audio-Latency: 11025")
+            extraHeaders.append("Audio-Jack-Status: connected; type=analog")
+            onLog?("已接受 RECORD，媒体流开始")
         case "GET", "POST", "ANNOUNCE":
             break
         default:
             break
         }
 
-        var head = "RTSP/1.0 200 OK\r\nCSeq: \(request.headers["cseq"] ?? "1")\r\n"
+        var head = "RTSP/1.0 200 OK\r\n"
+        head += "CSeq: \(request.headers["cseq"] ?? "1")\r\n"
+        // iOS 会核对 Server 里的 AirTunes 版本，缺失时部分版本会直接断开。
+        head += "Server: AirTunes/\(AirPlayIdentity.sourceVersion)\r\n"
         if !payload.isEmpty {
             head += "Content-Type: \(contentType)\r\n"
         }
@@ -202,7 +248,17 @@ final class RTSPControlServer {
     }
 
     private func infoPayload() -> Data {
-        return Data(CarPlayConfiguration.infoPlist().utf8)
+        // 声明的是 application/x-apple-binary-plist，就必须真的回二进制 plist。
+        // 之前直接发 XML 字符串，iOS 按二进制解析必然失败。
+        let xml = Data(CarPlayConfiguration.infoPlist().utf8)
+        guard let object = try? PropertyListSerialization.propertyList(from: xml, options: [], format: nil),
+              let binary = try? PropertyListSerialization.data(fromPropertyList: object,
+                                                              format: .binary,
+                                                              options: 0) else {
+            onLog?("警告：/info plist 转换失败，退回 XML")
+            return xml
+        }
+        return binary
     }
 
     private struct MediaTransport {
@@ -213,9 +269,31 @@ final class RTSPControlServer {
 
     /// 根据 SETUP 的 Transport 头分配媒体端口，等 iPhone 把视频送进来。
     private func setupTransport(_ requested: String, audio: Bool) -> MediaTransport? {
-        let isTCP = requested.uppercased().contains("TCP")
-        let isUDP = requested.uppercased().contains("UDP")
+        let upper = requested.uppercased()
+        let isTCP = upper.contains("TCP")
+        let isUDP = upper.contains("UDP")
         guard isTCP || isUDP else { return nil }
+
+        // 视频用 0-1，音频用 2-3；若 iOS 自己指定了 interleaved 就按它来。
+        var channel: UInt8 = audio ? 2 : 0
+        if let range = requested.range(of: "interleaved=") {
+            let tail = requested[range.upperBound...]
+            let head = tail.split(separator: ";").first ?? tail[...]
+            let nums = head.split(separator: "-")
+            if let first = nums.first, let value = UInt8(first) {
+                channel = value
+            }
+        }
+        if audio {
+            audioChannels.insert(channel)
+            audioChannels.insert(channel &+ 1)
+        }
+
+        // TCP 交错模式：媒体与控制复用同一条连接，不另开端口。
+        if isTCP {
+            let header = "RTP/AVP/TCP;unicast;interleaved=\(channel)-\(channel &+ 1);mode=record"
+            return MediaTransport(header: header, port: 0, kind: "TCP")
+        }
 
         let base = nextPort
         nextPort += 2
@@ -237,11 +315,8 @@ final class RTSPControlServer {
             mediaListeners.append(listener)
         }
 
-        let kind = isTCP ? "TCP" : "UDP"
-        let header = isTCP
-            ? "RTP/AVP/TCP;unicast;interleaved=0-1;server_port=\(base)"
-            : "RTP/AVP/UDP;unicast;server_port=\(base)-\(base + 1)"
-        return MediaTransport(header: header, port: Int(base), kind: kind)
+        let header = "RTP/AVP/UDP;unicast;server_port=\(base)-\(base + 1);mode=record"
+        return MediaTransport(header: header, port: Int(base), kind: "UDP")
     }
 
     private func readMedia(_ connection: NWConnection, audio: Bool) {
