@@ -25,13 +25,17 @@ jobs:
           cd upstream
           xcodebuild \
             -project TDSCarKit.xcodeproj \
-            -scheme TDSCarKit \
+            -target TDSCarKit \
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -derivedDataPath build \
             SUPPORTED_PLATFORMS=iphoneos \
+            SUPPORTS_MACCATALYST=NO \
+            SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD=NO \
+            EXCLUDED_ARCHS="" \
             ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
