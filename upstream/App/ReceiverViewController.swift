@@ -8,7 +8,7 @@ import PhotosUI
 import ImageIO
 import UniformTypeIdentifiers
 
-final class ReceiverViewController: UIViewController, CLLocationManagerDelegate {
+final class ReceiverViewController: UIViewController, CLLocationManagerDelegate, UIDocumentPickerDelegate {
     private let receiver = NativeReceiver()
     private let bluetooth = BLEBootstrap()
     private let sameDevice = SameDeviceProbe()
@@ -2196,7 +2196,10 @@ extension ReceiverViewController {
                     .control("锁屏与后台继续运行", icon: ("lock.fill", .systemPurple), keepAliveSwitch),
                     .control("画中画开启时机", icon: ("pip.fill", .systemIndigo), pictureInPictureTiming)
                 ]),
-                SettingsSection("支持", [
+                SettingsSection("支持", footer: "也可以把 certificate.p7b、leaf.cer、private.x963 三个文件放到 Documents 目录（或 Documents/IdentityImport），重启 App 会自动导入并存入 Keychain。", [
+                    .page("从文件导入 MFi 证书", icon: ("doc.badge.plus", .systemBlue)) { [unowned self] in
+                        self.identityImportPage()
+                    },
                     .page("诊断与实验", icon: ("stethoscope", .systemTeal)) { [unowned self] in self.diagnosticsPage() }
                 ])
             ]
@@ -2818,6 +2821,73 @@ extension ReceiverViewController {
         }
     }
 
+    /// MFi 证书导入页：可一次选中三个文件，也可由用户自行放到 Documents。
+    fileprivate func identityImportPage() -> SettingsPageController {
+        page("MFi 证书") { [unowned self] in
+            [
+                SettingsSection("当前状态", footer: "证书只保存在本机 Keychain，不会写入安装包。", [
+                    .info("身份", self.identity != nil ? "已载入" : "未载入"),
+                    .info("手动放置路径", "Documents/ 或 Documents/IdentityImport/"),
+                    .info("文件名", "certificate.p7b / leaf.cer / private.x963")
+                ]),
+                SettingsSection("导入", [
+                    .action("选择文件导入（可多选）", icon: ("doc.badge.plus", .systemBlue)) { [unowned self] in
+                        self.presentIdentityPicker()
+                    }
+                ])
+            ]
+        }
+    }
+
+    private func importIdentityFiles(_ urls: [URL]) {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let staged = documents.appendingPathComponent("IdentityImport", isDirectory: true)
+        try? FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+
+        var accepted: [String] = []
+        var rejected: [String] = []
+        for url in urls {
+            let ext = url.pathExtension.lowercased()
+            let target: String
+            switch ext {
+            case "x963": target = "private.x963"
+            case "cer": target = "leaf.cer"
+            case "p7b": target = "certificate.p7b"
+            default:
+                rejected.append(url.lastPathComponent)
+                continue
+            }
+            // 两个位置都放一份，兼容不同的查找顺序。
+            for directory in [staged, documents] {
+                let destination = directory.appendingPathComponent(target)
+                try? FileManager.default.removeItem(at: destination)
+                do {
+                    try FileManager.default.copyItem(at: url, to: destination)
+                } catch {
+                    log("复制 \(target) 失败：\(error.localizedDescription)")
+                }
+            }
+            accepted.append(target)
+        }
+
+        loadIdentity()
+        var summary = accepted.isEmpty ? "没有识别到可用的证书文件。" : "已导入：" + accepted.joined(separator: "、")
+        if !rejected.isEmpty { summary += "\n已忽略：" + rejected.joined(separator: "、") }
+        summary += identity != nil ? "\n身份已载入，可以启动 CarPlay。" : "\n身份仍未载入，请确认三个文件齐全。"
+        let alert = UIAlertController(title: "MFi 证书导入", message: summary, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "好", style: .default) { [weak self] _ in self?.reloadVisibleSettings() })
+        present(alert, animated: true)
+    }
+
+    private func presentIdentityPicker() {
+        // x963/p7b/cer 没有系统 UTType，用 .data 兜底以允许选中任意文件。
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .item], asCopy: true)
+        picker.allowsMultipleSelection = true
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+
     fileprivate func aboutPage() -> SettingsPageController {
         page("关于") { [unowned self] in
             [
@@ -2875,6 +2945,12 @@ extension ReceiverViewController {
 
 extension ReceiverViewController: UIDocumentPickerDelegate {
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        // MFi 身份三件套与 HTTPS 的 P12 证书共用同一个选择器，按扩展名分流。
+        let identityExtensions: Set<String> = ["x963", "cer", "p7b"]
+        if urls.contains(where: { identityExtensions.contains($0.pathExtension.lowercased()) }) {
+            importIdentityFiles(urls)
+            return
+        }
         guard let url = urls.first, !running else { return }
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }

@@ -34,9 +34,20 @@ enum AccessoryIdentityStore {
 
     static func importFromDocuments() throws -> AccessoryIdentity {
         let directory = try stagingDirectory()
-        let chainURL = directory.appendingPathComponent("certificate.p7b")
-        let leafURL = directory.appendingPathComponent("leaf.cer")
-        let keyURL = directory.appendingPathComponent("private.x963")
+        // 兼容两种放法：Documents/IdentityImport/ 以及 Documents/ 根目录（爱思助手更常往根目录拖）。
+        func resolve(_ name: String) throws -> URL {
+            let staged = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: staged.path) { return staged }
+            guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                throw StoreError.documentsUnavailable
+            }
+            let root = documents.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: root.path) { return root }
+            return staged
+        }
+        let chainURL = try resolve("certificate.p7b")
+        let leafURL = try resolve("leaf.cer")
+        let keyURL = try resolve("private.x963")
         defer { try? FileManager.default.removeItem(at: keyURL) }
 
         let chain = try readBounded(chainURL)
