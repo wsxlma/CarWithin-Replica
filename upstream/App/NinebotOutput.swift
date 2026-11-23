@@ -78,9 +78,12 @@ final class NinebotOutput {
         private var sentPicture = false
         private var status = ""
 
-        init(queue: DispatchQueue, onState: @escaping (String) -> Void, onLog: @escaping (String) -> Void,
+        init(queue: DispatchQueue, width: Int, height: Int,
+             onState: @escaping (String) -> Void, onLog: @escaping (String) -> Void,
              requestKeyframe: @escaping () -> Void) {
             self.queue = queue
+            self.width = width
+            self.height = height
             self.onState = onState
             self.onLog = onLog
             self.requestKeyframe = requestKeyframe
