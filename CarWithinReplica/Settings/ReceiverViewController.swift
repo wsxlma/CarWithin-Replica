@@ -164,6 +164,10 @@ final class ReceiverViewController: SettingsPageController {
 
     private func aboutLinks() -> [SettingsRow] {
         [
+            pushRow("MFi 身份材料", symbol: "key.horizontal.fill", tint: .systemIndigo,
+                    detail: { AccessoryIdentity.shared.isReady ? "已就绪" : "未导入" }) {
+                MFIViewController()
+            },
             pushRow("诊断与实验", symbol: "stethoscope", tint: .systemTeal) {
                 DiagnosticsViewController()
             },

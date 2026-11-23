@@ -11,3 +11,23 @@ artifact.zip
 artifact-out/
 *.ipa
 analysis/
+
+# ===== MFi 身份材料：绝不入库 =====
+# 私钥/证书由使用者自己通过爱思助手 / 文件 App 导入到应用 Documents 目录。
+# 任何形式的证书、私钥、p12、p7b、cer 都不允许提交。
+*.x963
+*.p12
+*.p7b
+*.cer
+*.key
+*.pem
+Resources/
+MFI/
+mfi/
+
+# ===== 抓包 / 逆向产物：含原版二进制与密钥线索，同样不入库 =====
+*.pcap
+*.pcapng
+*.carwithin
+analysis*.txt
+cp-strings.txt

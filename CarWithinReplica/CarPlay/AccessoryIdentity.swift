@@ -47,8 +47,16 @@ final class AccessoryIdentity {
     func load() -> [String] {
         var steps: [String] = []
 
+        // 允许重复载入（用户导入文件后点「重新载入」），先把上一次的状态清空。
+        certificateChain = nil
+        leafCertificate = nil
+        secKey = nil
+        p256Key = nil
+        isReady = false
+        identifier = "CarWithin"
+
         guard let leafURL = locate("leaf.cer") else {
-            return ["未找到 leaf.cer"]
+            return ["未找到 leaf.cer"] + Self.importHint.components(separatedBy: "\n")
         }
         guard let leafData = try? Data(contentsOf: leafURL),
               let certificate = SecCertificateCreateWithData(nil, leafData as CFData) else {
@@ -68,7 +76,7 @@ final class AccessoryIdentity {
         }
 
         guard let keyURL = locate("private.x963") else {
-            return steps + ["未找到 private.x963"]
+            return steps + ["未找到 private.x963"] + Self.importHint.components(separatedBy: "\n")
         }
         guard let keyData = try? Data(contentsOf: keyURL) else {
             return steps + ["private.x963 读取失败"]
@@ -204,15 +212,42 @@ final class AccessoryIdentity {
     }
 
     private func locate(_ name: String) -> URL? {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        if let url = documents?.appendingPathComponent(name),
-           FileManager.default.fileExists(atPath: url.path) {
-            return url
-        }
         let base = (name as NSString).deletingPathExtension
         let ext = (name as NSString).pathExtension
+
+        // 1) Documents 根目录（爱思助手 / 文件 App 导入的落点）
+        // 2) Documents/MFI 子目录（成组放更整洁）
+        // 3) Bundle 兜底（仅当有人自己把文件塞进 Xcode 工程时才会命中）
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        if let documents {
+            let roots = [
+                documents,
+                documents.appendingPathComponent("MFI", isDirectory: true),
+            ]
+            for root in roots {
+                let url = root.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    return url
+                }
+            }
+        }
         return Bundle.main.url(forResource: base, withExtension: ext)
     }
+
+    /// 缺失材料时给用户的指引 —— 必须能照着做，不能只说"缺少"。
+    static let importHint = """
+    未检测到 MFi 身份材料。请把下面三个文件导入本应用的 Documents 目录：
+      · private.x963
+      · leaf.cer
+      · certificate.p7b
+
+    导入方式（任选其一）：
+      1. 爱思助手 → 应用 → CarWithin → 文件管理 → 沙盒 → Documents，把三个文件拖进去；
+      2. iPhone「文件」App → 我的 iPhone → CarWithin，把三个文件拷贝进去；
+      3. 用数据线连接电脑，在 Finder/iTunes 的文件共享里拖入。
+
+    导入后回到设置页点一次「重新载入 MFi 材料」即可，无需重装。
+    """
 }
 
 /// 兼容旧调用点。
