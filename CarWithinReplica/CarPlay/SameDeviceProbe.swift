@@ -38,6 +38,19 @@ final class SameDeviceProbe {
     private var iap2Parser = IAP2Parser()
     private var frameParser = BLEFrameParser()
     private var scheduled: [DispatchWorkItem] = []
+
+    // 回环判定：ACC 直连通道在没有真实传输链路时，会把我们发出去的数据
+    // 原样从 dataOutHandler 回吐。识别出来才能避免把回环当响应误解析。
+    private var lastSentRaw: Data?
+    private(set) var echoCount = 0
+    private(set) var upstreamCount = 0
+
+    // transportType 轮换（原版只接受 2 或 8）
+    private var pendingTypes: [Int] = []
+    private var switchTimer: DispatchWorkItem?
+    private var currentType: Int = 2
+    private var probeName = ""
+    private var probeIdentity: AccessoryIdentity?
     /// 传给 0x4301 的地址，由上层注入（NativeReceiver 实际监听的地址）。
     var sessionEndpoint: (address: String, port: UInt16, wifi: AccessoryMessages.WiFi?)?
 
@@ -47,33 +60,84 @@ final class SameDeviceProbe {
 
     // MARK: - 生命周期
 
-    func start(name: String, identity: AccessoryIdentity, transportType: Int = 2) {
+    /// 依次尝试多个 transportType（原版只接受 2 或 8）。
+    /// 哪个 type 能收到**非回环**的上游数据，就停在哪个上。
+    func start(name: String, identity: AccessoryIdentity, transportTypes: [Int] = [2, 8]) {
         stop()
         active = true
         self.identity = identity
+        probeName = name
+        probeIdentity = identity
+        pendingTypes = transportTypes
         generation = UUID()
-        onLog?("[探测] 启动：name=\(name) type=\(transportType) generation=\(generation.uuidString.prefix(8))")
+        onLog?("[探测] 启动：name=\(name) 候选 transportType=\(transportTypes) generation=\(generation.uuidString.prefix(8))")
 
         transport.onLog = { [weak self] message in self?.onLog?(message) }
         transport.onData = { [weak self] data in self?.receive(data) }
 
-        guard transport.start(identifier: name, transportType: transportType) else {
-            onLog?("[探测] transport 启动失败，终止")
+        advanceTransport()
+    }
+
+    /// 兼容单 type 调用。
+    func start(name: String, identity: AccessoryIdentity, transportType: Int) {
+        start(name: name, identity: identity, transportTypes: [transportType])
+    }
+
+    private func advanceTransport() {
+        guard active else { return }
+        guard !pendingTypes.isEmpty else {
+            onLog?("[探测] 全部 transportType 试毕：回环 \(echoCount) 次，上游 \(upstreamCount) 次")
+            onFinished?("iOS 未把 iAP2 栈接到这条端点上（只收到本地回环）")
             stop()
-            onFinished?("直连配件通道建立失败")
             return
         }
 
-        // 原版：连接成功后立刻发 presence。
+        currentType = pendingTypes.removeFirst()
+        onLog?("[探测] 尝试 transportType=\(currentType)（剩余 \(pendingTypes)）")
+
+        // 每换一个 type 都是一条新链路，状态与解析器全部重置。
+        frameParser.reset()
+        iap2Parser.reset()
+        echoCount = 0
+        upstreamCount = 0
+        lastSentRaw = nil
+        sequence = 0x10
+        acknowledgement = 0
+        session = 1
+        lastPayloadSequence = 0x0100
+        linked = false
+        authenticated = false
+        identified = false
+        requested = false
+        controlConnected = false
+
+        guard transport.start(identifier: probeName, transportType: currentType) else {
+            onLog?("[探测] transportType=\(currentType) 建立失败，试下一个")
+            advanceTransport()
+            return
+        }
+
         do {
             try sendRaw(IAP2Packet.presence, label: "presence")
         } catch {
             onLog?("[探测] 发送 presence 失败：\(error.localizedDescription)")
-            stop()
-            onFinished?("发送 presence 失败")
+            advanceTransport()
             return
         }
-        onStage?("已连接配件通道，presence 已发出")
+        onStage?("transportType=\(currentType) 已连接，presence 已发出")
+
+        // 1.5 秒内没有任何上游数据，就换下一个 type。
+        let probe = DispatchWorkItem { [weak self] in
+            guard let self, self.active else { return }
+            guard self.upstreamCount == 0 else { return }
+            self.onLog?("[探测] transportType=\(self.currentType) 1.5s 内只收到回环（\(self.echoCount) 次），切换下一个")
+            self.transport.stop()
+            self.advanceTransport()
+        }
+        switchTimer?.cancel()
+        switchTimer = probe
+        scheduled.append(probe)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: probe)
 
         scheduleFollowUps()
     }
@@ -97,8 +161,14 @@ final class SameDeviceProbe {
         requested = false
         controlConnected = false
 
+        switchTimer?.cancel()
+        switchTimer = nil
         scheduled.forEach { $0.cancel() }
         scheduled.removeAll()
+        lastSentRaw = nil
+        echoCount = 0
+        upstreamCount = 0
+        pendingTypes.removeAll()
         identity = nil
         onLog?("[探测] 已停止并重置状态")
     }
@@ -107,6 +177,12 @@ final class SameDeviceProbe {
 
     /// 原版在 3s / 20s / 70s 三个时间点做补发，保证链路不会因为一次丢包就卡死。
     private func scheduleFollowUps() {
+        // 换 type 时清掉上一轮遗留的补发（保留正在计时的切换器）。
+        for item in scheduled where item !== switchTimer {
+            item.cancel()
+        }
+        scheduled.removeAll { $0 !== switchTimer }
+
         for (index, delay) in [3.0, 20.0, 70.0].enumerated() {
             let item = DispatchWorkItem { [weak self] in
                 guard let self, self.active else { return }
@@ -129,6 +205,7 @@ final class SameDeviceProbe {
         guard transport.sendData(data) else {
             throw ProtocolError.message("transport.sendData 返回失败（\(label)）")
         }
+        lastSentRaw = data
         onLog?("[探测] → \(label) \(data.count)B")
     }
 
@@ -144,13 +221,24 @@ final class SameDeviceProbe {
         guard transport.sendData(data) else {
             throw ProtocolError.message("transport.sendData 返回失败（消息 0x\(String(message.id, radix: 16))）")
         }
+        lastSentRaw = data
         onLog?("[探测] → iAP2 0x\(String(format: "%04X", message.id)) seq=\(sequence) session=\(session) \(data.count)B  \(hex(data))")
     }
 
     // MARK: - 接收
 
     private func receive(_ data: Data) {
-        onLog?("[探测] ← 原始 \(data.count)B  \(hex(data, limit: 64))")
+        // 关键诊断：ACC 直连通道若没有真实传输链路，会把我们刚发出去的数据
+        // 原样从 dataOutHandler 回吐。先判定回环，再决定要不要喂解析器。
+        if let lastSentRaw, !lastSentRaw.isEmpty, data == lastSentRaw {
+            echoCount += 1
+            onLog?("[探测] ← 本地回环 \(data.count)B（第 \(echoCount) 次，与刚发送的内容完全一致）")
+            onLog?("[探测] 判定：这条端点背后没有 iAP2 对端，数据只是被弹回")
+            return
+        }
+
+        upstreamCount += 1
+        onLog?("[探测] ← 上游数据 \(data.count)B  \(hex(data, limit: 64))")
 
         // 原版链路里数据可能带 BLEFrame 头，也可能直接是 iAP2 包。
         // 这里先尝试直接切 iAP2；切不出来再剥一层 BLEFrame。

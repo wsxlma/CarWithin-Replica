@@ -278,9 +278,9 @@ final class CarPlaySession {
             return
         }
         onLog?("CoreAccessories：\(ACCBridge.isAvailable ? "可用" : "不可用（仍尝试自建通道）")")
-        if SettingsStore.logLevel == "详细",
-           !UserDefaults.standard.bool(forKey: "acc.dump.shown") {
-            UserDefaults.standard.set(true, forKey: "acc.dump.shown")
+        // 首次启动无条件 dump 一次真实方法表：这是判断"有没有别的可用 API"的唯一可靠来源。
+        if !UserDefaults.standard.bool(forKey: "acc.dump.v2") {
+            UserDefaults.standard.set(true, forKey: "acc.dump.v2")
             onLog?(ACCBridge.endpointSignature())
             onLog?("ACCTransportClient 方法列表：\n" + ACCBridge.selectorDump())
         }
@@ -336,9 +336,10 @@ final class CarPlaySession {
         let host = BrowserOutput.localIPv4() ?? "127.0.0.1"
         probe.sessionEndpoint = (address: host, port: 7000, wifi: nil)
         onLog?("[探测] 会话地址 \(host):7000（RTSP）")
+        // 原版只接受 2 或 8：先试 2（Bluetooth Classic），1.5s 内只收到回环就换 8。
         probe.start(name: CarPlayConfiguration.vehicleName,
                     identity: AccessoryIdentity.shared,
-                    transportType: 2)
+                    transportTypes: [2, 8])
 
         CarPlayReceiver.shared.onLog = { [weak self] message in self?.onLog?(message) }
         CarPlayReceiver.shared.start()
