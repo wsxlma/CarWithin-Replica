@@ -8,7 +8,7 @@ import PhotosUI
 import ImageIO
 import UniformTypeIdentifiers
 
-final class ReceiverViewController: UIViewController, CLLocationManagerDelegate, UIDocumentPickerDelegate {
+final class ReceiverViewController: UIViewController, CLLocationManagerDelegate {
     private let receiver = NativeReceiver()
     private let bluetooth = BLEBootstrap()
     private let sameDevice = SameDeviceProbe()
