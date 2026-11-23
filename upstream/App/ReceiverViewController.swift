@@ -90,8 +90,6 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     /// 0 = follow the head unit's screen, 1 = the fixed resolution.
     private let sizeModeControl = ChoiceMenu(items: ["跟随车机", "固定尺寸"])
     private let iconSizeControl = ChoiceMenu(items: ReceiverConfiguration.iconSizes.map { "\($0.title)（\($0.widthMM) mm）" })
-    /// 九号仪表尺寸：索引 0 = 5 寸(848×480)，1 = 7 寸(1024×600)
-    private let ninebotSizeControl = ChoiceMenu(items: ["5 寸（848×480）", "7 寸（1024×600）"])
     private let autoRestartSwitch = UISwitch()
     private let performanceControl = ChoiceMenu(items: BrowserPerformance.allCases.map(\.title))
     private let showTouchesSwitch = UISwitch()
@@ -175,11 +173,15 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
     private let keepAliveSwitch = UISwitch()
     /// 只保留浏览器 / CarLife / AirPlay / 九号。
     /// 台铃与极核的适配已从界面移除；枚举值保留原样，避免牵连底层的分支判断。
-    private static let headUnitChoices: [HeadUnitOutput] = [.browser, .carLife, .airPlay, .ninebot]
-    private let headUnitOutput = ChoiceMenu(items: ["浏览器", "CarLife", "AirPlay", "九号 5 寸"])
+    private static let headUnitChoices: [HeadUnitOutput] = [.browser, .carLife, .airPlay, .ninebot, .ninebot7]
+    private let headUnitOutput = ChoiceMenu(items: ["浏览器", "CarLife", "AirPlay", "九号 5 寸", "九号 7 寸"])
     private enum HeadUnitOutput: Int {
-        case browser, carLife, airPlay, tailing, ninebot, zeeho
-        var usesInstrumentWiFi: Bool { self == .tailing || self == .ninebot || self == .zeeho }
+        case browser, carLife, airPlay, tailing, ninebot, ninebot7, zeeho
+        var usesInstrumentWiFi: Bool {
+            self == .tailing || self == .ninebot || self == .ninebot7 || self == .zeeho
+        }
+        var isNinebot: Bool { self == .ninebot || self == .ninebot7 }
+        var ninebotLarge: Bool { self == .ninebot7 }
     }
     private var airPlayStreamID: UUID?
     private var airPlayStreamURL: URL?
@@ -580,7 +582,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             self.updateZeehoStatus(message)
         }
         receiver.onNinebotState = { [weak self] message in
-            guard let self, self.running, self.outputMode == .ninebot else { return }
+            guard let self, self.running, self.outputMode.isNinebot else { return }
             self.updateNinebotStatus(message)
         }
         receiver.onTailingState = { [weak self] message in
@@ -749,7 +751,6 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         defaults.set(["auto", "h264", "h265"][max(0, codecControl.selectedSegmentIndex)], forKey: "videoCodec")
         defaults.set(sizeModeControl.selectedSegmentIndex, forKey: "displaySizeMode")
         defaults.set(ReceiverConfiguration.iconSizes[max(0, iconSizeControl.selectedSegmentIndex)].widthMM, forKey: "widthPhysicalMM")
-        defaults.set(ninebotSizeControl.selectedSegmentIndex == 1, forKey: "ninebotLarge")
         defaults.set(selectedPerformance.rawValue, forKey: "browserPerformance")
         defaults.set(autoRestartSwitch.isOn, forKey: "autoRestart")
         defaults.set(showTouchesSwitch.isOn, forKey: "showTouches")
@@ -767,9 +768,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
             let icon = ReceiverConfiguration.iconSizes[max(0, iconSizeControl.selectedSegmentIndex)].widthMM
             return DisplayPlan(width: 1024, height: 480, fps: 30, codec: .h264, iconWidthMM: icon)
         }
-        if outputMode == .ninebot {
+        if outputMode.isNinebot {
             let icon = ReceiverConfiguration.iconSizes[max(0, iconSizeControl.selectedSegmentIndex)].widthMM
-            let large = ninebotSizeControl.selectedSegmentIndex == 1
+            let large = outputMode.ninebotLarge
             return DisplayPlan(width: large ? NinebotOutput.largeWidth : NinebotOutput.standardWidth,
                                height: large ? NinebotOutput.largeHeight : NinebotOutput.standardHeight,
                                fps: NinebotOutput.fps, codec: .h264, iconWidthMM: icon)
@@ -1003,7 +1004,7 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         let showsLocalOutput = modeControl.selectedSegmentIndex != 2
         zeehoCard.isHidden = !showsLocalOutput || outputMode != .zeeho
         if !running { updateZeehoStatus("等待启动 CarPlay · 仪表 IP：\(zeehoAddressField.text ?? "192.168.0.1")") }
-        ninebotCard.isHidden = !showsLocalOutput || outputMode != .ninebot
+        ninebotCard.isHidden = !showsLocalOutput || !outputMode.isNinebot
         if !running { updateNinebotStatus("等待启动 CarPlay · 仪表 IP：\(ninebotAddressField.text ?? "")") }
         tailingCard.isHidden = !showsLocalOutput || outputMode != .tailing
         if !running { updateTailingStatus("等待启动 CarPlay · 仪表 IP：\(tailingAddressField.text ?? "192.168.1.1")") }
@@ -1059,9 +1060,9 @@ final class ReceiverViewController: UIViewController, CLLocationManagerDelegate 
         if outputMode == .zeeho {
             config.zeehoAddress = (zeehoAddressField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if outputMode == .ninebot {
+        if outputMode.isNinebot {
             config.ninebotAddress = (ninebotAddressField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            config.ninebotLarge = ninebotSizeControl.selectedSegmentIndex == 1
+            config.ninebotLarge = outputMode.ninebotLarge
         }
         if outputMode.usesInstrumentWiFi {
             let screen = view.window?.screen ?? UIScreen.main
@@ -1875,14 +1876,12 @@ extension ReceiverViewController {
         codecControl.selectedSegmentIndex = ["auto": 0, "h264": 1, "h265": 2][defaults.string(forKey: "videoCodec") ?? "h264"] ?? 1
         let savedWidth = defaults.object(forKey: "widthPhysicalMM") as? Int ?? CarPlayInfo.defaultWidthPhysicalMM
         iconSizeControl.selectedSegmentIndex = ReceiverConfiguration.iconSizes.firstIndex { $0.widthMM == savedWidth } ?? 1
-        ninebotSizeControl.selectedSegmentIndex = defaults.bool(forKey: "ninebotLarge") ? 1 : 0
         performanceControl.selectedSegmentIndex = BrowserPerformance.allCases.firstIndex(of:
             BrowserPerformance(rawValue: defaults.string(forKey: "browserPerformance") ?? "") ?? .auto) ?? 0
         autoRestartSwitch.isOn = defaults.object(forKey: "autoRestart") as? Bool ?? false
         showTouchesSwitch.isOn = defaults.bool(forKey: "showTouches")
         carButtonSwitch.isOn = defaults.object(forKey: "carButton") as? Bool ?? true
         let displayControls: [UIControl] = [resolutionControl, aspectRatioControl, sizeModeControl, frameRateControl, codecControl, iconSizeControl,
-                                            ninebotSizeControl,
                                             performanceControl, autoRestartSwitch, showTouchesSwitch, carButtonSwitch]
         displayControls.forEach { $0.addTarget(self, action: #selector(displaySettingChanged), for: .valueChanged) }
         appearanceControl.selectedSegmentIndex = defaults.integer(forKey: "carPlayAppearance")
@@ -1908,7 +1907,9 @@ extension ReceiverViewController {
         let previousOutput = defaults.object(forKey: "headUnitOutput") as? Int
         let legacyOutput: HeadUnitOutput = defaults.bool(forKey: "carLifeEnabled") ? .carLife : .browser
         let migratedOutput = previousOutput.map { $0 == 1 ? HeadUnitOutput.carLife : .browser } ?? legacyOutput
-        headUnitOutput.selectedSegmentIndex = (savedOutput.flatMap(HeadUnitOutput.init(rawValue:)) ?? migratedOutput).rawValue
+        // 选项下标与枚举 rawValue 已经不一致（台铃/极核被移出列表），必须按数组查下标。
+        let restoredOutput = savedOutput.flatMap(HeadUnitOutput.init(rawValue:)) ?? migratedOutput
+        headUnitOutput.selectedSegmentIndex = Self.headUnitChoices.firstIndex(of: restoredOutput) ?? 0
         headUnitOutput.addTarget(self, action: #selector(headUnitOutputChanged), for: .valueChanged)
         zeehoAddressField.text = defaults.string(forKey: "zeehoAddress") ?? "192.168.0.1"
         zeehoAddressField.keyboardType = .decimalPad
@@ -2216,12 +2217,12 @@ extension ReceiverViewController {
                     SettingsSection("图标", [.control("CarPlay 图标大小", icon: ("square.grid.2x2.fill", .systemPurple), iconSizeControl)])
                 ]
             }
-            if outputMode == .ninebot {
-                let large = ninebotSizeControl.selectedSegmentIndex == 1
+            if outputMode.isNinebot {
+                let large = outputMode.ninebotLarge
                 return [
                     SettingsSection("九号 \(large ? "7" : "5") 寸", [
-                        .control("仪表尺寸", icon: ("rectangle.on.rectangle", .systemBlue), ninebotSizeControl),
-                        .info("本机与仪表画面", large ? "1024×600 · H.264 · 30 FPS" : "848×480 · H.264 · 30 FPS")
+                        .info("本机与仪表画面", large ? "1024×600 · H.264 · 30 FPS" : "848×480 · H.264 · 30 FPS"),
+                        .info("切换尺寸", "在「当前输出」里改选九号 5 寸 / 7 寸")
                     ]),
                     SettingsSection("图标", [.control("CarPlay 图标大小", icon: ("square.grid.2x2.fill", .systemPurple), iconSizeControl)])
                 ]
@@ -2541,8 +2542,9 @@ extension ReceiverViewController {
                     .field("仪表 IP 地址", zeehoAddressField, placeholder: "192.168.0.1"),
                     .note(zeehoStatus)
                 ])]
-            case .ninebot:
-                return [SettingsSection("九号 5 寸", footer: "iPhone 加入仪表 Wi-Fi 后，选择对应的 Wi-Fi 预设。先结束其他投屏，再打开仪表的投屏功能。声音由 iPhone 或蓝牙输出，触控在手机上操作。", [
+            case .ninebot, .ninebot7:
+                let sizeText = outputMode == .ninebot7 ? "7 寸（1024×600）" : "5 寸（848×480）"
+                return [SettingsSection("九号 \(sizeText)", footer: "iPhone 加入仪表 Wi-Fi 后，选择对应的 Wi-Fi 预设。先结束其他投屏，再打开仪表的投屏功能。声音由 iPhone 或蓝牙输出，触控在手机上操作。", [
                     .field("仪表 IP 地址", ninebotAddressField, placeholder: "192.168.1.1"),
                     .note(ninebotStatus)
                 ])]
@@ -2884,7 +2886,12 @@ extension ReceiverViewController {
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .item], asCopy: true)
         picker.allowsMultipleSelection = true
         picker.delegate = self
-        present(picker, animated: true)
+        // 设置页在导航栈里，直接对 self 弹会提示 "already presenting"，必须从最上层发起。
+        let host: UIViewController = settingsNavigation?.topViewController
+            ?? settingsNavigation
+            ?? self.presentedViewController
+            ?? self
+        host.present(picker, animated: true)
     }
 
 

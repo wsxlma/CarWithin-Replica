@@ -18,10 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 选择最新 Xcode
+        run: |
+          # 选版本号最高的 Xcode（能编译最新 iOS SDK）
+          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "选用 ${LATEST:-默认}"
+          if [ -n "$LATEST" ]; then sudo xcode-select -s "$LATEST"; fi
+          xcodebuild -version
+
       - name: 环境诊断
         run: |
-          ls /Applications | grep -i xcode || true
-          xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version || true
           cd upstream
           xcodebuild -project TDSCarKit.xcodeproj -target TDSCarKit -showBuildSettings 2>/dev/null \
